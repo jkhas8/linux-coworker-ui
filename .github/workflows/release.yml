@@ -94,7 +94,7 @@ jobs:
 
       - name: Upload bundles as workflow artifacts (always)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux-bundles-${{ steps.tag.outputs.name }}
           path: |
