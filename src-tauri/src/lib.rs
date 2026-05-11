@@ -31,7 +31,7 @@ async fn send_message(
             .or_else(home_dir)
             .unwrap_or_else(|| PathBuf::from("."));
         let mode = permission_mode.as_deref().unwrap_or("bypassPermissions");
-        *guard = Some(AgentSession::new(app.clone(), cwd, mcp_cfg, &mode));
+        *guard = Some(AgentSession::new(app.clone(), cwd, mcp_cfg, mode));
     }
     let session = guard.as_ref().unwrap();
     let imgs = attachments.unwrap_or_default();
