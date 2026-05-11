@@ -33,6 +33,12 @@ jobs:
       - name: cargo fmt
         run: cargo fmt --all -- --check
 
+      # Tauri's build.rs validates that every `externalBin` exists on disk,
+      # so we have to build and stage mcp-linux-control before any cargo
+      # workspace step touches src-tauri.
+      - name: Stage MCP sidecar
+        run: bash scripts/prepare-sidecar.sh
+
       - name: cargo check
         run: cargo check --workspace --all-targets
 
