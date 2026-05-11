@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-11
+
 ### Added
 - Image attachments in the composer: paste from clipboard (with async Clipboard
   API fallback), drag-and-drop, and file picker. Thumbnails show in a strip
