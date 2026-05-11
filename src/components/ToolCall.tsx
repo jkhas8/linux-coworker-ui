@@ -79,8 +79,16 @@ export function ToolResultCard(props: { result: ToolResult }) {
     if (typeof c === "string") return c;
     if (Array.isArray(c)) {
       return c
-        .filter((x: any) => x?.type === "text")
-        .map((x: any) => x.text)
+        .map((x: any) => {
+          if (x?.type === "text") return x.text;
+          if (x?.type === "web_search_result") {
+            const title = x.title ?? "(no title)";
+            const url = x.url ?? "";
+            return `- [${title}](${url})`;
+          }
+          return null;
+        })
+        .filter((s): s is string => typeof s === "string")
         .join("\n");
     }
     return "";

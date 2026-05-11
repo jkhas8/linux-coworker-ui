@@ -458,6 +458,7 @@ Until that exists, manual smoke test:
 | `mcp-linux-control` not located | Auto-locator can't find it | Set `MCP_LINUX_CONTROL_BIN=$PWD/target/debug/mcp-linux-control`. |
 | Frontend bundle suddenly grows | A new highlight.js language imported as a side effect | Use `highlight.js/lib/languages/<x>` only; never `import "highlight.js"`. |
 | MCP server logs not visible | We write to stderr | Run claude with `--verbose` (already on) and watch the dev console. |
+| Window opens fullscreen on i3/sway | Tiling WM behavior, not the app | Add to your i3 config: `for_window [class="linux-coworker-ui"] floating enable` |
 
 ---
 

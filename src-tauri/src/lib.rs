@@ -4,7 +4,7 @@ mod mcp_config;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agent::AgentSession;
+use agent::{AgentSession, ImageAttachment};
 use tauri::{AppHandle, State};
 use tokio::sync::Mutex;
 
@@ -18,6 +18,7 @@ async fn send_message(
     app: AppHandle,
     state: State<'_, Arc<AppState>>,
     text: String,
+    attachments: Option<Vec<ImageAttachment>>,
     working_dir: Option<String>,
     permission_mode: Option<String>,
 ) -> Result<String, String> {
@@ -30,24 +31,22 @@ async fn send_message(
             .or_else(home_dir)
             .unwrap_or_else(|| PathBuf::from("."));
         let mode = permission_mode.as_deref().unwrap_or("bypassPermissions");
-        let session = AgentSession::start(app.clone(), cwd, mcp_cfg, mode)
-            .await
-            .map_err(|e| e.to_string())?;
-        *guard = Some(session);
+        *guard = Some(AgentSession::new(app.clone(), cwd, mcp_cfg, &mode));
     }
     let session = guard.as_ref().unwrap();
+    let imgs = attachments.unwrap_or_default();
     session
-        .send_user_text(&text)
+        .send_user_message(&text, &imgs)
         .await
         .map_err(|e| e.to_string())?;
-    Ok(session.id.clone())
+    Ok(session.local_id.clone())
 }
 
 #[tauri::command]
 async fn end_session(state: State<'_, Arc<AppState>>) -> Result<(), String> {
     let mut guard = state.session.lock().await;
     if let Some(s) = guard.take() {
-        s.shutdown().await.map_err(|e| e.to_string())?;
+        s.end().await.map_err(|e| e.to_string())?;
     }
     Ok(())
 }

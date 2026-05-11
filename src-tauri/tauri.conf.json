@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "bun run build",
+    "beforeBuildCommand": "bash ../scripts/prepare-sidecar.sh && bun run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -24,6 +24,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "externalBin": ["binaries/mcp-linux-control"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

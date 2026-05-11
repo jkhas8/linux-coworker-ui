@@ -22,15 +22,34 @@ pub fn write_default_config(server_binary: &Path) -> Result<PathBuf> {
     Ok(path)
 }
 
-/// Locate the mcp-linux-control binary. In dev we look in
-/// `target/debug` next to the workspace; users can override with the
-/// `MCP_LINUX_CONTROL_BIN` env var.
+/// Locate the mcp-linux-control binary. Resolution order:
+///   1. `MCP_LINUX_CONTROL_BIN` env var (explicit override).
+///   2. Sibling of the running app binary (matches Tauri's `externalBin`
+///      install layout in .deb / AppImage bundles).
+///   3. Walk up ancestors looking for `target/<profile>/mcp-linux-control`
+///      (dev workflow).
+///   4. Fallback to `$PATH`.
 pub fn locate_server_binary() -> Result<PathBuf> {
     if let Ok(p) = std::env::var("MCP_LINUX_CONTROL_BIN") {
         return Ok(PathBuf::from(p));
     }
-    // Walk up from current exe to find target/<profile>/mcp-linux-control.
     let exe = std::env::current_exe()?;
+
+    // Tauri sidecars: same directory as the main binary, possibly with the
+    // target-triple suffix kept in dev builds.
+    if let Some(dir) = exe.parent() {
+        for name in [
+            "mcp-linux-control",
+            "mcp-linux-control-x86_64-unknown-linux-gnu",
+        ] {
+            let p = dir.join(name);
+            if p.is_file() {
+                return Ok(p);
+            }
+        }
+    }
+
+    // Dev workspace layout.
     for ancestor in exe.ancestors() {
         for profile in ["debug", "release"] {
             let candidate = ancestor.join(profile).join("mcp-linux-control");
@@ -38,11 +57,13 @@ pub fn locate_server_binary() -> Result<PathBuf> {
                 return Ok(candidate);
             }
         }
-        let sibling = ancestor.join("mcp-linux-control");
-        if sibling.is_file() {
-            return Ok(sibling);
-        }
     }
+
+    // PATH fallback.
+    if let Ok(p) = which::which("mcp-linux-control") {
+        return Ok(p);
+    }
+
     anyhow::bail!(
         "could not locate mcp-linux-control binary. Build with `cargo build -p mcp-linux-control` \
          or set MCP_LINUX_CONTROL_BIN."

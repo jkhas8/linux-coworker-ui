@@ -3,9 +3,23 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#000000" />
+    <meta name="theme-color" content="#15171b" />
     <link rel="icon" type="image/svg+xml" href="/src/assets/logo.svg" />
-    <title>Tauri + Solid + Typescript App</title>
+    <title>linux coworker</title>
+    <style>
+      /* Inlined so the dark theme is in place before the JS/CSS bundle loads —
+         eliminates the white-flash on cold start. */
+      html,
+      body {
+        background: #15171b;
+        color: #e6e6e6;
+        margin: 0;
+      }
+      #root {
+        background: #15171b;
+        min-height: 100vh;
+      }
+    </style>
   </head>
 
   <body>

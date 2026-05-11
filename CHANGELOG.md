@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Image attachments in the composer: paste from clipboard (with async Clipboard
+  API fallback), drag-and-drop, and file picker. Thumbnails show in a strip
+  above the textarea; images are sent as Anthropic image content blocks.
+- Markdown rendering for assistant messages (marked + DOMPurify) with
+  syntax-highlighted code blocks (highlight.js, subset of languages).
+- Thinking blocks: collapsible card with custom toggle, monospace muted body
+  rendered as preserved-whitespace plain text.
+- "+ New" conversation button — kills the in-flight subprocess, clears the
+  log, and starts a fresh Claude session on the next message.
+- Inline image rendering for tool results (screenshot tool).
+- `server_tool_use` / `web_search_tool_result` handling so Anthropic-hosted
+  web search renders as a normal tool card + clickable result list.
+- Interactive `AskUserQuestion` form with radio/checkbox options, "Other:"
+  free-text input, and submit-and-lock behavior.
+- Responsive layout using a `--gutter` CSS variable; chat now fills the window
+  with a 1100 px content cap. Mobile breakpoint at 640 px collapses the role
+  gutter.
+- Dev-tools enabled in release builds (`tauri = { features = ["devtools"] }`).
+- `scripts/prepare-sidecar.sh` builds and stages the `mcp-linux-control`
+  binary for Tauri's `externalBin`; wired into `beforeBuildCommand`.
+
+### Changed
+- Agent runtime now spawns a fresh `claude` subprocess per user turn and
+  passes `--resume <session_id>` from turn 2 onward. The previous long-lived
+  stdin pipe didn't reliably carry multi-turn input.
+- `mcp-linux-control` binary is bundled into the `.deb` as a Tauri sidecar
+  (`externalBin`), so the installed app is self-contained with no env-var
+  workaround.
+- Filter user-role echo messages out of the stream (we already render the
+  user's input locally; echoes were creating duplicate/red-error rows).
+- `end_session` now kills the subprocess with a 500ms grace period instead
+  of waiting indefinitely.
+
+### Fixed
+- White flash on cold start: inlined dark background in `index.html`.
+- New-conversation button no longer hangs when the subprocess is mid-turn.
+
 ## [0.1.0] - 2026-05-11
 
 ### Added

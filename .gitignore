@@ -9,6 +9,8 @@ target
 
 # Tauri
 src-tauri/gen/schemas
+# Sidecar binaries are built by scripts/prepare-sidecar.sh; not source of truth.
+src-tauri/binaries/
 
 # Editor / OS
 .DS_Store

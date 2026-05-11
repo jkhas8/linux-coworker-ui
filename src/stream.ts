@@ -19,7 +19,15 @@ export function eventToBlocks(raw: any): DisplayBlock[] {
     case "assistant":
       return contentToBlocks("assistant", raw.message?.content);
     case "user":
-      return contentToBlocks("user", raw.message?.content);
+      // User-role messages from the agent are one of:
+      //  (a) tool_result blocks — actual tool execution feedback we want to show.
+      //  (b) text/image echoes of what the user just typed — already rendered
+      //      locally by App.tsx before we invoked. Drop these to avoid
+      //      duplicates (which sometimes come back as red error frames after
+      //      --resume).
+      return contentToBlocks("user", raw.message?.content).filter(
+        (b) => b.kind === "tool_result",
+      );
     case "system":
       if (raw.subtype === "init") {
         return [
@@ -45,10 +53,13 @@ export function eventToBlocks(raw: any): DisplayBlock[] {
     case "unparsed":
       return [{ kind: "error", text: `unparsed: ${raw.text}` }];
     case "stream_event":
-      // Partial deltas — ignore for now; we render finalized messages.
+    case "rate_limit_event":
+      // Informational / streaming deltas — drop quietly.
       return [];
     default:
-      return [{ kind: "system", text: JSON.stringify(raw) }];
+      // eslint-disable-next-line no-console
+      console.warn("[stream] unknown top-level event", raw.type, raw);
+      return [{ kind: "system", text: `[unhandled ${raw.type ?? "event"}]` }];
   }
 }
 
@@ -59,13 +70,30 @@ function contentToBlocks(role: "user" | "assistant", content: any): DisplayBlock
     if (!c || typeof c !== "object") continue;
     switch (c.type) {
       case "text":
-        if (c.text) out.push({ kind: "text", role, text: c.text });
+        if (c.text && c.text.trim()) out.push({ kind: "text", role, text: c.text });
         break;
+      case "thinking":
+        if (c.thinking && c.thinking.trim())
+          out.push({ kind: "thinking", text: c.thinking });
+        break;
+      case "redacted_thinking":
+        out.push({ kind: "thinking", text: "(redacted)", redacted: true });
+        break;
+      // Local tools (Bash/Read/Edit/our MCP server, etc.)
       case "tool_use":
-        out.push({
-          kind: "tool_call",
-          call: { id: c.id, name: c.name, input: c.input },
-        });
+        if (c.name === "AskUserQuestion") {
+          // Render as an interactive form rather than a static tool card.
+          out.push({
+            kind: "ask_question",
+            id: c.id,
+            questions: Array.isArray(c.input?.questions) ? c.input.questions : [],
+          });
+        } else {
+          out.push({
+            kind: "tool_call",
+            call: { id: c.id, name: c.name, input: c.input },
+          });
+        }
         break;
       case "tool_result":
         out.push({
@@ -77,6 +105,43 @@ function contentToBlocks(role: "user" | "assistant", content: any): DisplayBlock
           },
         });
         break;
+      // Server-side tools (Anthropic-hosted web search etc.)
+      case "server_tool_use":
+        out.push({
+          kind: "tool_call",
+          call: { id: c.id, name: c.name ?? "server_tool", input: c.input },
+        });
+        break;
+      case "web_search_tool_result":
+        out.push({
+          kind: "tool_result",
+          result: {
+            tool_use_id: c.tool_use_id,
+            content: c.content,
+            is_error: !!c.error,
+          },
+        });
+        break;
+      case "image":
+        if (c.source?.data && c.source?.media_type) {
+          out.push({
+            kind: "image",
+            role,
+            mimeType: c.source.media_type,
+            data: c.source.data,
+          });
+        }
+        break;
+      default: {
+        // Unknown content block — log so we can add a handler, and render
+        // a compact debug row so the user sees that *something* was here.
+        // eslint-disable-next-line no-console
+        console.warn("[stream] unknown content type", c.type, c);
+        out.push({
+          kind: "system",
+          text: `[unhandled ${c.type ?? "block"}]`,
+        });
+      }
     }
   }
   return out;
