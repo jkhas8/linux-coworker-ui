@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question / discussion
+    url: ../../discussions
+    about: For open-ended questions, design discussions, or ideas not yet ready to be filed as a feature request.
+  - name: Security vulnerability
+    url: ../../security/advisories/new
+    about: Report privately. Please do not open a public issue.

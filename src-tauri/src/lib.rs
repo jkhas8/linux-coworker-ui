@@ -1,0 +1,74 @@
+mod agent;
+mod mcp_config;
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use agent::AgentSession;
+use tauri::{AppHandle, State};
+use tokio::sync::Mutex;
+
+#[derive(Default)]
+struct AppState {
+    session: Mutex<Option<AgentSession>>,
+}
+
+#[tauri::command]
+async fn send_message(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    text: String,
+    working_dir: Option<String>,
+    permission_mode: Option<String>,
+) -> Result<String, String> {
+    let mut guard = state.session.lock().await;
+    if guard.is_none() {
+        let server_bin = mcp_config::locate_server_binary().map_err(|e| e.to_string())?;
+        let mcp_cfg = mcp_config::write_default_config(&server_bin).map_err(|e| e.to_string())?;
+        let cwd = working_dir
+            .map(PathBuf::from)
+            .or_else(home_dir)
+            .unwrap_or_else(|| PathBuf::from("."));
+        let mode = permission_mode.as_deref().unwrap_or("bypassPermissions");
+        let session = AgentSession::start(app.clone(), cwd, mcp_cfg, mode)
+            .await
+            .map_err(|e| e.to_string())?;
+        *guard = Some(session);
+    }
+    let session = guard.as_ref().unwrap();
+    session
+        .send_user_text(&text)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(session.id.clone())
+}
+
+#[tauri::command]
+async fn end_session(state: State<'_, Arc<AppState>>) -> Result<(), String> {
+    let mut guard = state.session.lock().await;
+    if let Some(s) = guard.take() {
+        s.shutdown().await.map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from)
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info,linux_coworker_ui=debug".into()),
+        )
+        .init();
+
+    tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .manage(Arc::new(AppState::default()))
+        .invoke_handler(tauri::generate_handler![send_message, end_session])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}

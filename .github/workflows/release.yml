@@ -1,0 +1,104 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v0.1.0). Leave blank to build without publishing."
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Linux bundles
+    # ubuntu-22.04 picks up an older glibc, giving the resulting AppImage/.deb
+    # wider downstream compatibility.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            librsvg2-dev \
+            libdbus-1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            libsoup-3.0-dev \
+            patchelf \
+            file \
+            pkg-config \
+            build-essential
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install frontend deps
+        run: bun install --frozen-lockfile
+
+      - name: Build mcp-linux-control (release)
+        run: cargo build -p mcp-linux-control --release
+
+      - name: Resolve release tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ inputs.tag }}" ]; then
+            echo "name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=dev-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build app + bundles (AppImage, .deb, .rpm)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ steps.tag.outputs.name }}
+          releaseName: "linux-coworker-ui ${{ steps.tag.outputs.name }}"
+          releaseBody: |
+            See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for what's new.
+
+            **Downloads**
+
+            - `*.AppImage` — portable, runs on most distros
+            - `*.deb`      — Debian / Ubuntu
+            - `*.rpm`      — Fedora / RHEL
+
+            **Install (.deb):** `sudo apt install ./linux-coworker-ui_*.deb`
+            **Install (.rpm):** `sudo dnf install ./linux-coworker-ui-*.rpm`
+            **Run (AppImage):** `chmod +x *.AppImage && ./linux-coworker-ui_*.AppImage`
+
+            Requires: `xdotool`, `wmctrl`, `maim` on the host, and the
+            `claude` CLI on `$PATH`.
+          releaseDraft: ${{ steps.tag.outputs.publish == 'true' }}
+          prerelease: false
+          # Don't auto-publish — leave the release as a draft so a human can
+          # paste in the changelog and click Publish.
+          includeUpdaterJson: false
+
+      - name: Upload bundles as workflow artifacts (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-bundles-${{ steps.tag.outputs.name }}
+          path: |
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/rpm/*.rpm
+          if-no-files-found: warn

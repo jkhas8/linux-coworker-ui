@@ -1,0 +1,84 @@
+name: Bug report
+description: Report a defect in linux-coworker-ui
+title: "[bug] "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug! Please fill out the sections below so we can
+        reproduce the issue quickly.
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened? What did you expect?
+      placeholder: When I asked the agent to … it … but I expected …
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal sequence that triggers the bug.
+      placeholder: |
+        1. Run `bun run tauri dev`
+        2. Send the prompt "…"
+        3. Observe …
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / output
+      description: Paste the relevant terminal output from `bun run tauri dev`.
+      render: shell
+  - type: input
+    id: distro
+    attributes:
+      label: Distro
+      description: Output of `cat /etc/os-release | head -2`
+      placeholder: Ubuntu 24.04
+    validations:
+      required: true
+  - type: dropdown
+    id: session
+    attributes:
+      label: Session type
+      options:
+        - X11
+        - Wayland
+        - Other / not sure
+    validations:
+      required: true
+  - type: input
+    id: desktop
+    attributes:
+      label: Desktop environment / WM
+      placeholder: GNOME, KDE, i3, sway, …
+  - type: input
+    id: claude-version
+    attributes:
+      label: claude --version
+      placeholder: 2.1.138
+    validations:
+      required: true
+  - type: input
+    id: rust-version
+    attributes:
+      label: rustc --version
+      placeholder: rustc 1.93.0
+  - type: input
+    id: commit
+    attributes:
+      label: linux-coworker-ui commit
+      description: `git rev-parse --short HEAD`
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched existing issues and didn't find a duplicate.
+          required: true
+        - label: I'm running the system deps listed in the README.
+          required: true

@@ -1,0 +1,30 @@
+# Node / frontend
+node_modules
+dist
+.vite
+*.tsbuildinfo
+
+# Rust / cargo
+target
+
+# Tauri
+src-tauri/gen/schemas
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+bun-debug.log*
+
+# Env
+.env
+.env.local
+.env.*.local
