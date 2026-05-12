@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-05-12
+
+### Fixed
+- `beforeBuildCommand` in `tauri.conf.json` now anchors to the git repo root
+  via `git rev-parse --show-toplevel` instead of a relative `../scripts/...`
+  path. The relative path resolved locally (cwd = `src-tauri/`) but failed in
+  the `tauri-action` CI runner (cwd = project root), breaking the v0.2.0
+  release workflow.
+
 ## [0.2.0] - 2026-05-11
 
 ### Added
