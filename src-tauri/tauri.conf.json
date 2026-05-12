@@ -1,12 +1,12 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "linux-coworker-ui",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "identifier": "dev.linuxcoworker.ui",
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "bash ../scripts/prepare-sidecar.sh && bun run build",
+    "beforeBuildCommand": "bash -c 'cd \"$(git rev-parse --show-toplevel)\" && bash scripts/prepare-sidecar.sh && bun run build'",
     "frontendDist": "../dist"
   },
   "app": {
