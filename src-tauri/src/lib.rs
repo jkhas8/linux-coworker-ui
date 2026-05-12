@@ -60,6 +60,17 @@ async fn cancel_turn(state: State<'_, Arc<AppState>>) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+async fn read_file(path: String) -> Result<String, String> {
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|e| format!("{path}: {e}"))?;
+    match String::from_utf8(bytes.clone()) {
+        Ok(s) => Ok(s),
+        Err(_) => Err(format!("not a UTF-8 text file ({} bytes)", bytes.len())),
+    }
+}
+
 fn home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }
@@ -79,7 +90,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             send_message,
             end_session,
-            cancel_turn
+            cancel_turn,
+            read_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

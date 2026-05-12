@@ -8,6 +8,7 @@ import { ThinkingBlock } from "./components/Thinking";
 import { AnswerSection } from "./components/AnswerSection";
 import { AskQuestionForm } from "./components/AskQuestion";
 import { AttachmentStrip } from "./components/Attachments";
+import { FilePreview } from "./components/FilePreview";
 import { fileToAttachment, imagesFromDataTransfer } from "./attachments";
 import "./App.css";
 
@@ -17,8 +18,19 @@ function App() {
   const [attachments, setAttachments] = createSignal<Attachment[]>([]);
   const [busy, setBusy] = createSignal(false);
   const [dragOver, setDragOver] = createSignal(false);
+  const [previewPath, setPreviewPath] = createSignal<string | null>(null);
+  // Bump to force the FilePreview to refetch from disk (e.g. after another Edit).
+  const [previewRefresh, setPreviewRefresh] = createSignal(0);
   // Last user payload, kept so the Retry button can re-send after a stop.
   let lastPayload: { text: string; attachments: Attachment[] } | null = null;
+
+  function openPreview(path: string) {
+    setPreviewPath((prev) => {
+      // If reopening the same path, refresh from disk so Edit/Write changes show.
+      if (prev === path) setPreviewRefresh((n) => n + 1);
+      return path;
+    });
+  }
 
   let unlisten: UnlistenFn | undefined;
   let logEl: HTMLDivElement | undefined;
@@ -224,7 +236,7 @@ function App() {
   }
 
   return (
-    <main class="app">
+    <main class="app" classList={{ "with-preview": !!previewPath() }}>
       <header class="header">
         <h1>linux coworker</h1>
         <span class="hint">Claude Code · Linux desktop</span>
@@ -242,6 +254,8 @@ function App() {
         </button>
       </header>
 
+      <div class="content">
+      <section class="chat-pane">
       <div class="log" ref={logEl}>
         <Show when={blocks().length === 0}>
           <div class="empty">
@@ -259,6 +273,7 @@ function App() {
               block={b}
               onAskSubmit={submitAskAnswers}
               onRetry={retryLastTurn}
+              onPreview={openPreview}
             />
           )}
         </For>
@@ -322,6 +337,15 @@ function App() {
           </button>
         </div>
       </form>
+      </section>
+      <Show when={previewPath()}>
+        <FilePreview
+          path={previewPath()!}
+          refreshKey={previewRefresh()}
+          onClose={() => setPreviewPath(null)}
+        />
+      </Show>
+      </div>
     </main>
   );
 }
@@ -330,6 +354,7 @@ function BlockView(props: {
   block: DisplayBlock;
   onAskSubmit: (id: string, lines: string[]) => void;
   onRetry: () => void;
+  onPreview: (path: string) => void;
 }) {
   const b = () => props.block;
   return (
@@ -396,7 +421,7 @@ function BlockView(props: {
         })()}
       </Show>
       <Show when={b().kind === "tool_call"}>
-        <ToolCallCard call={(b() as any).call} />
+        <ToolCallCard call={(b() as any).call} onPreview={props.onPreview} />
       </Show>
       <Show when={b().kind === "tool_result"}>
         <ToolResultCard result={(b() as any).result} />

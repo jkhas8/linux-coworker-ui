@@ -47,6 +47,12 @@ marked.setOptions({ gfm: true, breaks: true });
 marked.use({
   renderer: {
     code({ text, lang }: { text: string; lang?: string }) {
+      // Mermaid: emit a placeholder div with the source HTML-escaped so it
+      // survives DOMPurify. Markdown.tsx finds these post-render and calls
+      // mermaid.render on each one's textContent.
+      if (lang === "mermaid") {
+        return `<div class="mermaid-block" data-mermaid="1">${escapeHtml(text)}</div>`;
+      }
       let highlighted: string;
       let langClass = "";
       if (lang && hljs.getLanguage(lang)) {

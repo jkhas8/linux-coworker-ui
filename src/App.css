@@ -27,9 +27,27 @@ body,
 
 .app {
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto 1fr;
   height: 100vh;
   width: 100%;
+}
+
+.content {
+  display: grid;
+  grid-template-columns: 1fr;
+  min-height: 0;
+  overflow: hidden;
+}
+.app.with-preview .content {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.chat-pane {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .header {
@@ -780,6 +798,223 @@ body,
 .md pre code.hljs {
   padding: 0;
   background: transparent;
+}
+
+/* Mermaid diagrams rendered inline in markdown. */
+.md .mermaid-block {
+  margin: 12px 0;
+  padding: 14px;
+  background: #0f1217;
+  border: 1px solid #262932;
+  border-radius: 8px;
+  text-align: center;
+  overflow-x: auto;
+}
+.md .mermaid-block[data-mermaid="1"]::before,
+.md .mermaid-block[data-mermaid="rendering"]::before {
+  content: "rendering diagram…";
+  color: #6e7279;
+  font-style: italic;
+  font-size: 12px;
+}
+.md .mermaid-block[data-mermaid="1"],
+.md .mermaid-block[data-mermaid="rendering"] {
+  /* Hide the raw source while we wait for the SVG. */
+  color: transparent;
+}
+.md .mermaid-block svg {
+  max-width: 100%;
+  height: auto;
+}
+.md .mermaid-error {
+  color: #ff8a80;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  text-align: left;
+  white-space: pre-wrap;
+  margin: 0;
+}
+
+/* ── tool call preview button ─────────────────────────────────────────── */
+
+.tool-preview-btn {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid #2a3a55;
+  color: #8fb4ff;
+  border-radius: 4px;
+  padding: 2px 9px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.tool-preview-btn:hover {
+  background: rgba(78, 161, 255, 0.12);
+  color: #c9dfff;
+  border-color: #4ea1ff;
+}
+
+/* ── right-pane file preview ──────────────────────────────────────────── */
+
+.preview-pane {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid #262932;
+  background: #14161b;
+  overflow: hidden;
+}
+.preview-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #262932;
+  background: #181a20;
+  min-width: 0;
+}
+.preview-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.preview-basename {
+  font-size: 13px;
+  font-weight: 600;
+  color: #f1f1f4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.preview-dir {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  color: #6e7279;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.preview-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.preview-toggle,
+.preview-refresh,
+.preview-close {
+  background: transparent;
+  border: 1px solid #2a2d33;
+  color: #b5b9c2;
+  border-radius: 5px;
+  padding: 4px 9px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s;
+}
+.preview-toggle:hover,
+.preview-refresh:hover,
+.preview-close:hover {
+  border-color: #4ea1ff;
+  color: #f1f1f4;
+}
+.preview-close {
+  width: 28px;
+  padding: 4px 0;
+  text-align: center;
+  font-size: 16px;
+  line-height: 1;
+}
+.preview-body {
+  overflow: auto;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.preview-loading,
+.preview-error {
+  padding: 18px 20px;
+  color: #8a8d93;
+  font-style: italic;
+}
+.preview-error {
+  color: #ff8a80;
+  font-style: normal;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+.preview-code {
+  margin: 0;
+  padding: 10px 0;
+  font-family: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, monospace;
+  font-size: 12.5px;
+  line-height: 1.55;
+  background: transparent;
+  counter-reset: code-line;
+  tab-size: var(--indent-unit, 2ch);
+  -moz-tab-size: var(--indent-unit, 2ch);
+}
+.preview-code-line {
+  counter-increment: code-line;
+  display: flex;
+  align-items: flex-start;
+  min-height: 1.55em;
+}
+.preview-code-line::before {
+  content: counter(code-line);
+  flex-shrink: 0;
+  width: 4ch;
+  padding: 0 12px 0 14px;
+  color: #5a5d63;
+  text-align: right;
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+.preview-code-line:hover::before {
+  color: #b5b9c2;
+}
+.preview-code-content {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  /* Soft-wrap long lines instead of horizontal scroll. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  padding-right: 16px;
+}
+/* Indent guides drawn only in the leading-whitespace zone — width equals
+ * the line's indent depth (`--indent-cols`), so deeper lines get more guides
+ * and content lines without indent get none. */
+.preview-code-content::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: calc(var(--indent-cols, 0) * 1ch);
+  pointer-events: none;
+  background-image: linear-gradient(
+    to right,
+    rgba(110, 114, 121, 0.22) 0,
+    rgba(110, 114, 121, 0.22) 1px,
+    transparent 1px,
+    transparent 100%
+  );
+  background-size: var(--indent-unit, 2ch) 100%;
+  background-repeat: repeat-x;
+}
+.preview-md {
+  padding: 16px 22px 28px;
+}
+.preview-md .md {
+  font-size: 14px;
 }
 
 /* ── AskUserQuestion form ─────────────────────────────────────────────── */
