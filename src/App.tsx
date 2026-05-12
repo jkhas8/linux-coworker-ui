@@ -130,6 +130,7 @@ function App() {
     setInput("");
     setAttachments([]);
     setBusy(false);
+    setPreviewPath(null);
     invoke("end_session").catch(() => {
       /* session may not have been started — fine */
     });

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Clicking **+ New** to start a fresh conversation now also closes the
+  split-pane file preview. Previously the right-side preview panel stayed
+  open and orphaned, still showing whichever file the previous conversation
+  had opened.
+
 ## [0.4.0] - 2026-05-12
 
 ### Added
