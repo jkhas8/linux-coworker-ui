@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-12
+
+### Added
+- Split-pane file preview: clicking a new **Preview** button on a Read /
+  Write / Edit / MultiEdit / NotebookEdit tool-call card opens the target
+  file in a right-side panel.
+- Preview header has Code / Preview toggle (markdown only), reload-from-disk
+  (`↻`), and close (`×`) controls.
+- Code view with highlight.js syntax highlighting, per-line numbers in a
+  CSS-counter gutter, per-line indent guides drawn only across each line's
+  leading-whitespace zone, and soft-wrap on overflow (no horizontal scroll).
+- Auto-detected indent unit (2 vs 4 spaces) drives both `tab-size` and the
+  indent-guide spacing.
+- `splitHighlightedLines` helper closes/reopens hljs spans at newlines so
+  multi-line constructs (block comments, template literals) stay valid HTML
+  per-line.
+- Markdown preview supports inline **Mermaid** diagrams via fenced
+  ` ```mermaid ` blocks; rendered as SVG by mermaid.run with a dark theme
+  and an error fallback showing the parser message + source.
+- Re-clicking Preview on the same file bumps a refresh counter so the
+  panel re-reads from disk (helpful after another Edit lands).
+
+### Backend
+- New `read_file(path)` Tauri command. Reads any path; rejects non-UTF-8
+  files with a friendly message instead of trying to render bytes.
+
 ## [0.3.0] - 2026-05-12
 
 ### Added

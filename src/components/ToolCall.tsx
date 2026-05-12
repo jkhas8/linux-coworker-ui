@@ -24,10 +24,21 @@ function isMcp(name: string): boolean {
   return name.startsWith("mcp__");
 }
 
-export function ToolCallCard(props: { call: ToolCall }) {
+export function ToolCallCard(props: {
+  call: ToolCall;
+  onPreview?: (path: string) => void;
+}) {
   const [open, setOpen] = createSignal(false);
   const name = () => props.call.name;
   const input = () => props.call.input ?? {};
+
+  const fileToPreview = (): string | null => {
+    if (["Read", "Write", "Edit", "MultiEdit", "NotebookEdit"].includes(name())) {
+      const p = (input() as any).file_path ?? (input() as any).notebook_path;
+      return typeof p === "string" && p.length > 0 ? p : null;
+    }
+    return null;
+  };
 
   return (
     <div class="tool" classList={{ mcp: isMcp(name()) }}>
@@ -54,6 +65,19 @@ export function ToolCallCard(props: { call: ToolCall }) {
             <span class="tool-summary muted">{Object.keys(input()).slice(0, 3).join(", ")}</span>
           </Match>
         </Switch>
+        <Show when={fileToPreview() && props.onPreview}>
+          <button
+            type="button"
+            class="tool-preview-btn"
+            title="Preview file in the right pane"
+            onClick={(e) => {
+              e.stopPropagation();
+              props.onPreview!(fileToPreview()!);
+            }}
+          >
+            Preview
+          </button>
+        </Show>
         <span class="chev">{open() ? "▾" : "▸"}</span>
       </button>
       <Show when={open()}>
