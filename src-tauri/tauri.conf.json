@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "bash ../scripts/prepare-sidecar.sh && bun run build",
+    "beforeBuildCommand": "bash -c 'cd \"$(git rev-parse --show-toplevel)\" && bash scripts/prepare-sidecar.sh && bun run build'",
     "frontendDist": "../dist"
   },
   "app": {
