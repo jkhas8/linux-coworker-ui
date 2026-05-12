@@ -66,12 +66,30 @@ export function ToolCallCard(props: { call: ToolCall }) {
 export function ToolResultCard(props: { result: ToolResult }) {
   const r = () => props.result;
   const content = () => r().content;
+  const [open, setOpen] = createSignal(false);
 
-  // Detect image-bearing content first — render inline.
-  const imageBlock = () => {
+  // Detect image-bearing content first — render inline. Tool result image
+  // blocks can come in two shapes:
+  //   MCP raw:        { type: "image", data, mimeType }
+  //   Anthropic API:  { type: "image", source: { type: "base64", data, media_type } }
+  // claude code typically re-wraps MCP images into the API shape before
+  // emitting them on the stream, so we accept both.
+  const imageBlock = (): { data: string; mime: string } | null => {
     const c = content();
     if (!Array.isArray(c)) return null;
-    return c.find((x: any) => x?.type === "image") ?? null;
+    for (const x of c as any[]) {
+      if (!x || x.type !== "image") continue;
+      if (typeof x.data === "string") {
+        return { data: x.data, mime: x.mimeType ?? "image/png" };
+      }
+      if (x.source && typeof x.source.data === "string") {
+        return {
+          data: x.source.data,
+          mime: x.source.media_type ?? x.source.mimeType ?? "image/png",
+        };
+      }
+    }
+    return null;
   };
 
   const textBlock = () => {
@@ -99,15 +117,16 @@ export function ToolResultCard(props: { result: ToolResult }) {
   // (full-screen 1080p+ → multi-megabyte base64). Object URLs have no length
   // cap. The URL is revoked when the block unmounts.
   const imageUrl = createMemo<string | null>(() => {
-    const img = imageBlock() as any;
+    const img = imageBlock();
     if (!img) return null;
-    const mime = img.mimeType ?? "image/png";
     try {
       const bytes = base64ToBytes(img.data);
-      const blob = new Blob([bytes], { type: mime });
+      const blob = new Blob([bytes], { type: img.mime });
       return URL.createObjectURL(blob);
     } catch (e) {
-      console.error("[ToolResultCard] failed to decode image", e);
+      console.error("[ToolResultCard] failed to decode image", e, {
+        bytesLen: img.data?.length,
+      });
       return null;
     }
   });
@@ -116,27 +135,53 @@ export function ToolResultCard(props: { result: ToolResult }) {
     if (u) URL.revokeObjectURL(u);
   });
 
+  const previewText = () => {
+    const t = textBlock();
+    if (!t) return "";
+    const firstLine = t.split("\n").find((l) => l.trim()) ?? "";
+    return firstLine.length > 100 ? firstLine.slice(0, 100) + "…" : firstLine;
+  };
+  const lineCount = () =>
+    textBlock()
+      .split(/\r?\n/)
+      .filter((l) => l.trim()).length;
+
   return (
-    <div class="tool-result" classList={{ err: !!r().is_error }}>
+    <div class="tool-result" classList={{ err: !!r().is_error, open: open() }}>
       <Show when={imageUrl()}>
         {(url) => <img class="screenshot" src={url()} alt="screenshot" />}
       </Show>
       <Show when={textBlock()}>
-        {(t) => (
-          <Show
-            when={r().is_error}
-            fallback={
-              <Show
-                when={looksLikeMarkdown(t())}
-                fallback={<pre class="result-pre">{t()}</pre>}
-              >
-                <Markdown source={t()} />
-              </Show>
+        <button
+          type="button"
+          class="tool-result-head"
+          onClick={() => setOpen((o) => !o)}
+        >
+          <span class="chev">›</span>
+          <span class="tool-result-label">
+            {r().is_error ? "error" : "tool result"}
+          </span>
+          <span class="tool-result-preview">{previewText()}</span>
+          <span class="tool-result-meta">
+            {lineCount()} line{lineCount() === 1 ? "" : "s"}
+          </span>
+        </button>
+        <Show when={open()}>
+          {(() => {
+            const t = textBlock();
+            if (r().is_error) {
+              return <pre class="result-pre err">{t}</pre>;
             }
-          >
-            <pre class="result-pre err">{t()}</pre>
-          </Show>
-        )}
+            if (looksLikeMarkdown(t)) {
+              return (
+                <div class="tool-result-body">
+                  <Markdown source={t} />
+                </div>
+              );
+            }
+            return <pre class="result-pre">{t}</pre>;
+          })()}
+        </Show>
       </Show>
     </div>
   );

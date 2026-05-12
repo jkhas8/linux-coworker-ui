@@ -33,7 +33,7 @@ export interface AskQuestion {
 }
 
 export type DisplayBlock =
-  | { kind: "text"; role: Role; text: string }
+  | { kind: "text"; role: Role; text: string; cancelled?: boolean }
   | { kind: "thinking"; text: string; redacted?: boolean }
   | { kind: "image"; role: Role; mimeType: string; data: string; alt?: string }
   | { kind: "tool_call"; call: ToolCall }

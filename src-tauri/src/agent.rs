@@ -136,16 +136,21 @@ impl AgentSession {
         Ok(())
     }
 
-    /// Kill any in-flight turn and forget the claude session id (so the next
-    /// message starts a fresh conversation).
-    pub async fn end(&self) -> Result<()> {
-        {
-            let mut cur = self.current.lock().await;
-            if let Some(mut c) = cur.take() {
-                let _ = c.start_kill();
-                let _ = c.wait().await;
-            }
+    /// Kill any in-flight turn but **keep** the claude session id so the user
+    /// can continue the same conversation. Used by the in-composer Stop button.
+    pub async fn cancel_turn(&self) -> Result<()> {
+        let mut cur = self.current.lock().await;
+        if let Some(mut c) = cur.take() {
+            let _ = c.start_kill();
+            let _ = c.wait().await;
         }
+        Ok(())
+    }
+
+    /// Kill any in-flight turn and forget the claude session id (so the next
+    /// message starts a fresh conversation). Used by the "+ New" button.
+    pub async fn end(&self) -> Result<()> {
+        self.cancel_turn().await?;
         let mut sid = self.claude_session_id.lock().await;
         *sid = None;
         Ok(())

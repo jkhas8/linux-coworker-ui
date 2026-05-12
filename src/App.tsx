@@ -3,9 +3,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { eventToBlocks } from "./stream";
 import type { AgentEvent, Attachment, DisplayBlock } from "./types";
-import { Markdown } from "./components/Markdown";
 import { ToolCallCard, ToolResultCard } from "./components/ToolCall";
 import { ThinkingBlock } from "./components/Thinking";
+import { AnswerSection } from "./components/AnswerSection";
 import { AskQuestionForm } from "./components/AskQuestion";
 import { AttachmentStrip } from "./components/Attachments";
 import { fileToAttachment, imagesFromDataTransfer } from "./attachments";
@@ -17,6 +17,8 @@ function App() {
   const [attachments, setAttachments] = createSignal<Attachment[]>([]);
   const [busy, setBusy] = createSignal(false);
   const [dragOver, setDragOver] = createSignal(false);
+  // Last user payload, kept so the Retry button can re-send after a stop.
+  let lastPayload: { text: string; attachments: Attachment[] } | null = null;
 
   let unlisten: UnlistenFn | undefined;
   let logEl: HTMLDivElement | undefined;
@@ -121,6 +123,26 @@ function App() {
     });
   }
 
+  function stopTurn() {
+    setBusy(false);
+    // Mark the most recent user text block as cancelled so the inline
+    // "stopped" badge + retry button render next to it.
+    setBlocks((prev) => {
+      const next = [...prev];
+      for (let i = next.length - 1; i >= 0; i--) {
+        const b = next[i];
+        if (b.kind === "text" && b.role === "user" && !b.cancelled) {
+          next[i] = { ...b, cancelled: true };
+          break;
+        }
+      }
+      return next;
+    });
+    invoke("cancel_turn").catch(() => {
+      /* nothing to cancel — fine */
+    });
+  }
+
   async function onDrop(e: DragEvent) {
     e.preventDefault();
     setDragOver(false);
@@ -141,6 +163,8 @@ function App() {
     const text = input().trim();
     const atts = attachments();
     if ((!text && atts.length === 0) || busy()) return;
+
+    lastPayload = { text, attachments: atts };
 
     // Render the user's message locally before clearing.
     setBlocks((prev) => {
@@ -169,6 +193,34 @@ function App() {
       setBlocks((prev) => [...prev, { kind: "error", text: String(err) }]);
       setBusy(false);
     }
+  }
+
+  function retryLastTurn() {
+    if (!lastPayload || busy()) return;
+    // Un-mark the most recent cancelled user text block.
+    setBlocks((prev) => {
+      const next = [...prev];
+      for (let i = next.length - 1; i >= 0; i--) {
+        const b = next[i];
+        if (b.kind === "text" && b.role === "user" && b.cancelled) {
+          next[i] = { ...b, cancelled: false };
+          break;
+        }
+      }
+      return next;
+    });
+    const payload = lastPayload;
+    setBusy(true);
+    invoke("send_message", {
+      text: payload.text,
+      attachments: payload.attachments.map((a) => ({
+        mediaType: a.mimeType,
+        data: a.data,
+      })),
+    }).catch((err) => {
+      setBlocks((prev) => [...prev, { kind: "error", text: String(err) }]);
+      setBusy(false);
+    });
   }
 
   return (
@@ -202,7 +254,13 @@ function App() {
           </div>
         </Show>
         <For each={blocks()}>
-          {(b) => <BlockView block={b} onAskSubmit={submitAskAnswers} />}
+          {(b) => (
+            <BlockView
+              block={b}
+              onAskSubmit={submitAskAnswers}
+              onRetry={retryLastTurn}
+            />
+          )}
         </For>
       </div>
 
@@ -248,8 +306,19 @@ function App() {
             placeholder="Tell the agent what to do…  (Shift+Enter for newline · paste/drop images)"
             rows={3}
           />
-          <button type="submit" disabled={busy()}>
-            {busy() ? "…" : "Send"}
+          <button
+            type="button"
+            class="send-btn"
+            classList={{ stop: busy() }}
+            title={busy() ? "Stop the current turn" : "Send"}
+            onClick={(e) => (busy() ? stopTurn() : send(e))}
+          >
+            <Show when={busy()} fallback={"Send"}>
+              <span class="stop-glyph" aria-hidden="true">
+                ■
+              </span>
+              <span>Stop</span>
+            </Show>
           </button>
         </div>
       </form>
@@ -260,6 +329,7 @@ function App() {
 function BlockView(props: {
   block: DisplayBlock;
   onAskSubmit: (id: string, lines: string[]) => void;
+  onRetry: () => void;
 }) {
   const b = () => props.block;
   return (
@@ -271,9 +341,30 @@ function BlockView(props: {
             <div class={`msg ${t.role}`}>
               <div class="role">{t.role}</div>
               <div class="text">
-                <Show when={t.role === "assistant"} fallback={<div class="user-text">{t.text}</div>}>
+                <Show
+                  when={t.role === "assistant"}
+                  fallback={
+                    <div class="user-row">
+                      <div class="user-text">{t.text}</div>
+                      <Show when={t.cancelled}>
+                        <div class="msg-status">
+                          <span class="status-badge stopped">stopped</span>
+                          <button
+                            type="button"
+                            class="retry-btn"
+                            onClick={() => props.onRetry()}
+                            title="Retry this message"
+                          >
+                            <span class="retry-glyph" aria-hidden="true">↻</span>
+                            Retry
+                          </button>
+                        </div>
+                      </Show>
+                    </div>
+                  }
+                >
                   <div class="answer">
-                    <Markdown source={t.text} />
+                    <AnswerSection text={t.text} />
                   </div>
                 </Show>
               </div>

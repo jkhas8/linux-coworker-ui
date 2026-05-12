@@ -51,6 +51,15 @@ async fn end_session(state: State<'_, Arc<AppState>>) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+async fn cancel_turn(state: State<'_, Arc<AppState>>) -> Result<(), String> {
+    let guard = state.session.lock().await;
+    if let Some(s) = guard.as_ref() {
+        s.cancel_turn().await.map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }
@@ -67,7 +76,11 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(Arc::new(AppState::default()))
-        .invoke_handler(tauri::generate_handler![send_message, end_session])
+        .invoke_handler(tauri::generate_handler![
+            send_message,
+            end_session,
+            cancel_turn
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

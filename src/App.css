@@ -132,6 +132,56 @@ body,
   display: inline-block;
   max-width: 100%;
 }
+
+/* User text + (optional) stopped/retry controls on the right. */
+.user-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.msg-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.status-badge {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+.status-badge.stopped {
+  color: #ff8a80;
+  background: rgba(217, 83, 79, 0.12);
+  border: 1px solid rgba(217, 83, 79, 0.3);
+}
+.retry-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid #2a2d33;
+  color: #b5b9c2;
+  border-radius: 5px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+.retry-btn:hover {
+  border-color: #4ea1ff;
+  color: #4ea1ff;
+  background: rgba(78, 161, 255, 0.08);
+}
+.retry-btn .retry-glyph {
+  font-size: 14px;
+  line-height: 1;
+}
 .msg.assistant .text {
   color: #f1f1f4;
 }
@@ -141,6 +191,57 @@ body,
  * messages visually.) */
 .msg.assistant .answer {
   /* intentionally empty — keep the class as a hook for future styling */
+}
+
+/* Collapsible "Show reasoning" for assistant answers whose leading
+ * blockquotes contain inline thinking. */
+.answer-thinking {
+  margin: 0 0 12px;
+}
+.answer-thinking-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid #2a2d33;
+  border-radius: 5px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: #8a8d93;
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.12s, color 0.12s;
+}
+.answer-thinking-head:hover {
+  border-color: #4ea1ff;
+  color: #c9cdd5;
+}
+.answer-thinking-head .chev {
+  font-size: 14px;
+  line-height: 1;
+  display: inline-block;
+  transition: transform 0.15s ease;
+}
+.answer-thinking.open .answer-thinking-head .chev {
+  transform: rotate(90deg);
+}
+.answer-thinking-label {
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+.answer-thinking-body {
+  margin-top: 8px;
+  padding: 10px 14px;
+  border-left: 2px solid #2f3340;
+  background: #181a20;
+  border-radius: 0 6px 6px 0;
+  color: #b5b9c2;
+  font-size: 13px;
+}
+.answer-thinking-body .md {
+  font-size: 13px;
+  line-height: 1.55;
+  color: #b5b9c2;
 }
 
 /* ── thinking ─────────────────────────────────────────────────────────── */
@@ -278,11 +379,10 @@ body,
 }
 .md blockquote {
   margin: 8px 0;
-  padding: 4px 12px;
-  border-left: 3px solid #4ea1ff;
-  background: #1c2028;
-  color: #c9cdd5;
-  border-radius: 0 6px 6px 0;
+  padding: 2px 12px;
+  border-left: 2px solid #3a3f4d;
+  background: transparent;
+  color: #9aa0aa;
 }
 .md code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -348,7 +448,6 @@ body,
   background: #1a1d23;
   border: 1px solid #262932;
   border-radius: 8px;
-  overflow: hidden;
 }
 .tool.mcp .dot {
   background: #c084fc;
@@ -358,13 +457,16 @@ body,
   align-items: center;
   gap: 10px;
   width: 100%;
+  min-height: 36px;
   padding: 8px 12px;
   background: transparent;
   border: 0;
+  border-radius: 8px;
   color: inherit;
   cursor: pointer;
   text-align: left;
   font: inherit;
+  line-height: 1.4;
 }
 .tool-head:hover {
   background: #1f2229;
@@ -418,9 +520,74 @@ body,
   margin-left: 86px;
   padding: 6px 0 6px 12px;
   border-left: 2px solid #2a2d33;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 .tool-result.err {
   border-left-color: #d9534f;
+}
+.tool-result-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  padding: 4px 0;
+  width: 100%;
+  min-width: 0;
+}
+.tool-result-head:hover .tool-result-label,
+.tool-result-head:hover .tool-result-meta {
+  color: #c9cdd5;
+}
+.tool-result-head .chev {
+  font-size: 16px;
+  line-height: 1;
+  color: #5a5d63;
+  display: inline-block;
+  width: 12px;
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+.tool-result.open .tool-result-head .chev {
+  transform: rotate(90deg);
+}
+.tool-result-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #8a8d93;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.tool-result.err .tool-result-label {
+  color: #ff8a80;
+}
+.tool-result-preview {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: #b5b9c2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+.tool-result.err .tool-result-preview {
+  color: #ff8a80;
+}
+.tool-result-meta {
+  font-size: 11px;
+  color: #6e7279;
+  flex-shrink: 0;
+}
+.tool-result-body {
+  padding-left: 22px;
 }
 .tool-result .result-pre {
   margin: 0;
@@ -500,7 +667,7 @@ body,
 .composer textarea:focus {
   border-color: #4ea1ff;
 }
-.composer button[type="submit"] {
+.send-btn {
   background: #4ea1ff;
   color: #0b1220;
   border: none;
@@ -508,10 +675,28 @@ body,
   padding: 0 22px;
   font-weight: 600;
   cursor: pointer;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 88px;
+  transition: background 0.12s, color 0.12s;
 }
-.composer button[type="submit"]:disabled {
-  opacity: 0.5;
-  cursor: default;
+.send-btn:hover {
+  background: #6cb2ff;
+}
+.send-btn.stop {
+  background: #d9534f;
+  color: #f6f6f6;
+}
+.send-btn.stop:hover {
+  background: #e2625e;
+}
+.send-btn .stop-glyph {
+  font-size: 10px;
+  line-height: 1;
+  display: inline-block;
 }
 .attach-btn {
   background: #20232a;
