@@ -19,15 +19,7 @@ export function eventToBlocks(raw: any): DisplayBlock[] {
     case "assistant":
       return contentToBlocks("assistant", raw.message?.content);
     case "user":
-      // User-role messages from the agent are one of:
-      //  (a) tool_result blocks — actual tool execution feedback we want to show.
-      //  (b) text/image echoes of what the user just typed — already rendered
-      //      locally by App.tsx before we invoked. Drop these to avoid
-      //      duplicates (which sometimes come back as red error frames after
-      //      --resume).
-      return contentToBlocks("user", raw.message?.content).filter(
-        (b) => b.kind === "tool_result",
-      );
+      return contentToBlocks("user", raw.message?.content);
     case "system":
       if (raw.subtype === "init") {
         return [

@@ -132,13 +132,20 @@ fn tool_definitions() -> Value {
     json!([
         {
             "name": "screenshot",
-            "description": "Capture the current X11 screen and return it as an image. Use this to see what is on the user's screen before deciding where to click.",
+            "description": "Capture the current X11 screen and return it as a downsampled PNG. By default the image is scaled to 25% of the original (cuts image tokens ~10×) — still readable for layout and most UI text. Use `scale` to override (0.1–1.0). When you need exact details, pass `scale` 0.5–1.0; prefer `region` to crop instead of upscaling.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "region": {
                         "type": "string",
                         "description": "Optional region in `WxH+X+Y` form. Omit to capture the full screen."
+                    },
+                    "scale": {
+                        "type": "number",
+                        "description": "Downsample factor. Default 0.25. Range 0.1–1.0.",
+                        "default": 0.25,
+                        "minimum": 0.1,
+                        "maximum": 1.0
                     }
                 }
             }
@@ -158,13 +165,32 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "xdo_move",
-            "description": "Move the mouse cursor to absolute screen coordinates.",
+            "description": "Move the mouse cursor to absolute screen coordinates. No click.",
             "inputSchema": {
                 "type": "object",
                 "required": ["x", "y"],
                 "properties": {
                     "x": { "type": "integer" },
                     "y": { "type": "integer" }
+                }
+            }
+        },
+        {
+            "name": "xdo_hover",
+            "description": "Hover the cursor at (x,y) and wait briefly so the UI reveals any tooltips / hover states. Recommended workflow: `xdo_hover` → `screenshot` (to see what appeared) → `xdo_click`. This avoids blind clicks on regions that change behavior when hovered (menus, custom controls).",
+            "inputSchema": {
+                "type": "object",
+                "required": ["x", "y"],
+                "properties": {
+                    "x": { "type": "integer" },
+                    "y": { "type": "integer" },
+                    "dwell_ms": {
+                        "type": "integer",
+                        "description": "Milliseconds to dwell at the position so the UI can render the hover state. Default 300.",
+                        "default": 300,
+                        "minimum": 0,
+                        "maximum": 5000
+                    }
                 }
             }
         },
@@ -227,6 +253,7 @@ async fn call_tool(name: &str, args: Value) -> Result<Value> {
         "launch_app" => launch_app(args).await?,
         "list_windows" => list_windows().await?,
         "focus_window" => focus_window(args).await?,
+        "xdo_hover" => xdo_hover(args).await?,
         other => bail!("unknown tool: {other}"),
     };
     Ok(json!({ "content": content, "isError": false }))
@@ -283,12 +310,40 @@ async fn screenshot(args: Value) -> Result<Value> {
 
     let bytes = tokio::fs::read(&tmp).await?;
     let _ = tokio::fs::remove_file(&tmp).await;
-    let b64 = B64.encode(&bytes);
+
+    let scale = args
+        .get("scale")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.25)
+        .clamp(0.1, 1.0);
+
+    let processed = downsample_png(&bytes, scale)?;
+    let b64 = B64.encode(&processed);
     Ok(json!([{
         "type": "image",
         "data": b64,
         "mimeType": "image/png"
     }]))
+}
+
+/// Decode `png_bytes`, scale by `scale` (≤1.0), re-encode as PNG.
+/// Cuts image-token cost dramatically — a full 1080p screen at 0.25× drops
+/// from ~1900 image tokens to ~400.
+fn downsample_png(png_bytes: &[u8], scale: f64) -> Result<Vec<u8>> {
+    if scale >= 0.999 {
+        return Ok(png_bytes.to_vec());
+    }
+    let img = image::load_from_memory(png_bytes).context("decode screenshot PNG")?;
+    let (w, h) = (img.width(), img.height());
+    let new_w = ((w as f64) * scale).round().max(1.0) as u32;
+    let new_h = ((h as f64) * scale).round().max(1.0) as u32;
+    // Triangle is fast and visually fine for UI screenshots.
+    let small = img.resize_exact(new_w, new_h, image::imageops::FilterType::Triangle);
+    let mut out = Vec::with_capacity(png_bytes.len() / 4);
+    small
+        .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+        .context("re-encode downsampled PNG")?;
+    Ok(out)
 }
 
 async fn xdo_click(args: Value) -> Result<Value> {
@@ -428,4 +483,27 @@ fn tempfile_path(ext: &str) -> String {
         ext
     );
     dir.join(name).to_string_lossy().into_owned()
+}
+
+async fn xdo_hover(args: Value) -> Result<Value> {
+    require_bin("xdotool")?;
+    let x = args.get("x").and_then(Value::as_i64).context("missing x")?;
+    let y = args.get("y").and_then(Value::as_i64).context("missing y")?;
+    let dwell = args
+        .get("dwell_ms")
+        .and_then(Value::as_i64)
+        .unwrap_or(300)
+        .clamp(0, 5000) as u64;
+
+    run_ok(
+        "xdotool",
+        &["mousemove", "--sync", &x.to_string(), &y.to_string()],
+    )
+    .await?;
+    if dwell > 0 {
+        tokio::time::sleep(std::time::Duration::from_millis(dwell)).await;
+    }
+    Ok(text(format!(
+        "hovered at ({x},{y}) for {dwell}ms — take a screenshot to see the hover state, then xdo_click."
+    )))
 }

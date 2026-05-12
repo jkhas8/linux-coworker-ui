@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-12
+
+### Added
+- Send button doubles as Stop while a turn is running; clicking it kills the
+  in-flight `claude` subprocess while keeping the conversation's session id.
+- Inline `stopped` badge + Retry button on the right of a cancelled user
+  message. Retry re-sends the same text + attachments.
+- AskUserQuestion built-in tool now renders as an interactive form (radio /
+  checkbox per question, "Other" free-text input, submit-and-lock). The
+  phantom error tool_result it emits in `--print` mode is hidden.
+- Assistant answers with leading `>` blockquote reasoning collapse that
+  prefix behind a "Show reasoning" toggle — only the final answer is visible
+  by default.
+- Tool result cards collapse by default with a one-line preview + line count.
+- Screenshots downsample to 25% by default in `mcp-linux-control`
+  (configurable via the `scale` arg), cutting image-token cost ~5×.
+- New `xdo_hover` MCP tool: moves the cursor and dwells so tooltips/hover
+  states render before the model decides to click.
+- Recognise Anthropic's hosted `server_tool_use` and `web_search_tool_result`
+  content blocks; render web-search results as a clickable markdown list.
+- Default case for unknown content blocks renders a visible `[unhandled X]`
+  system row and logs the payload to the devtools console.
+
+### Changed
+- Split `AgentSession::end` into `cancel_turn` (keep session id, for the Stop
+  button) and `end` (clear session id, for "+ New").
+- Stream parser no longer drops content from user-role messages — tool_call
+  echoes from `--resume` survive, so the blue/purple tool-call cards stay
+  visible.
+- Toned-down inline blockquote styling inside assistant markdown.
+
+### Fixed
+- Tool-call cards were getting vertically clipped due to `overflow: hidden`
+  on `.tool`. Removed the clip and gave `.tool-head` an explicit min-height.
+- Screenshot tool results that exceeded webkit2gtk's `data:` URL size limit
+  silently rendered as a broken-image icon. Now go through
+  `URL.createObjectURL(new Blob(...))` and accept both the MCP and Anthropic
+  image-block shapes.
+
 ## [0.2.1] - 2026-05-12
 
 ### Fixed
