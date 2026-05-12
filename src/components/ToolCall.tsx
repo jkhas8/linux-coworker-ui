@@ -1,4 +1,4 @@
-import { createSignal, Match, Show, Switch } from "solid-js";
+import { createMemo, createSignal, Match, onCleanup, Show, Switch } from "solid-js";
 import type { ToolCall, ToolResult } from "../types";
 import { Markdown } from "./Markdown";
 
@@ -94,16 +94,32 @@ export function ToolResultCard(props: { result: ToolResult }) {
     return "";
   };
 
+  // Convert the base64 image payload into a Blob object URL. data: URLs work
+  // for small images but webkit2gtk silently drops very large screenshots
+  // (full-screen 1080p+ → multi-megabyte base64). Object URLs have no length
+  // cap. The URL is revoked when the block unmounts.
+  const imageUrl = createMemo<string | null>(() => {
+    const img = imageBlock() as any;
+    if (!img) return null;
+    const mime = img.mimeType ?? "image/png";
+    try {
+      const bytes = base64ToBytes(img.data);
+      const blob = new Blob([bytes], { type: mime });
+      return URL.createObjectURL(blob);
+    } catch (e) {
+      console.error("[ToolResultCard] failed to decode image", e);
+      return null;
+    }
+  });
+  onCleanup(() => {
+    const u = imageUrl();
+    if (u) URL.revokeObjectURL(u);
+  });
+
   return (
     <div class="tool-result" classList={{ err: !!r().is_error }}>
-      <Show when={imageBlock()}>
-        {(img) => (
-          <img
-            class="screenshot"
-            src={`data:${(img() as any).mimeType ?? "image/png"};base64,${(img() as any).data}`}
-            alt="screenshot"
-          />
-        )}
+      <Show when={imageUrl()}>
+        {(url) => <img class="screenshot" src={url()} alt="screenshot" />}
       </Show>
       <Show when={textBlock()}>
         {(t) => (
@@ -124,6 +140,14 @@ export function ToolResultCard(props: { result: ToolResult }) {
       </Show>
     </div>
   );
+}
+
+function base64ToBytes(b64: string): Uint8Array {
+  const clean = b64.replace(/\s+/g, "");
+  const bin = atob(clean);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
 }
 
 function looksLikeMarkdown(s: string): boolean {
