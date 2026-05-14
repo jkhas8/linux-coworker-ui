@@ -124,6 +124,17 @@ function contentToBlocks(role: "user" | "assistant", content: any): DisplayBlock
           });
         }
         break;
+      case "document":
+        // The model never re-emits user-attached documents in practice, but if
+        // a future content block shows up we render a compact file chip.
+        out.push({
+          kind: "file",
+          role,
+          name: c.title ?? c.source?.url ?? "document",
+          mimeType: c.source?.media_type ?? "application/octet-stream",
+          size: 0,
+        });
+        break;
       default: {
         // Unknown content block — log so we can add a handler, and render
         // a compact debug row so the user sees that *something* was here.

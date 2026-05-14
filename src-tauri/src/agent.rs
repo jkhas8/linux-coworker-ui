@@ -15,10 +15,30 @@ use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct ImageAttachment {
-    #[serde(rename = "mediaType")]
-    pub media_type: String,
-    pub data: String,
+#[serde(tag = "kind", rename_all = "lowercase")]
+#[allow(dead_code)]
+pub enum UserAttachment {
+    Image {
+        #[serde(rename = "mediaType")]
+        media_type: String,
+        data: String,
+        #[serde(default)]
+        name: Option<String>,
+    },
+    Pdf {
+        #[serde(rename = "mediaType", default)]
+        media_type: Option<String>,
+        data: String,
+        #[serde(default)]
+        name: Option<String>,
+    },
+    Text {
+        #[serde(rename = "mediaType", default)]
+        media_type: Option<String>,
+        text: String,
+        #[serde(default)]
+        name: Option<String>,
+    },
 }
 
 pub const EVENT_NAME: &str = "claude://event";
@@ -62,8 +82,12 @@ impl AgentSession {
         }
     }
 
-    pub async fn send_user_message(&self, text: &str, images: &[ImageAttachment]) -> Result<()> {
-        let payload = build_user_message(text, images);
+    pub async fn send_user_message(
+        &self,
+        text: &str,
+        attachments: &[UserAttachment],
+    ) -> Result<()> {
+        let payload = build_user_message(text, attachments);
         if payload.is_none() {
             return Ok(()); // nothing to send
         }
@@ -157,17 +181,42 @@ impl AgentSession {
     }
 }
 
-fn build_user_message(text: &str, images: &[ImageAttachment]) -> Option<Value> {
-    let mut content: Vec<Value> = Vec::with_capacity(images.len() + 1);
-    for img in images {
-        content.push(json!({
-            "type": "image",
-            "source": {
-                "type": "base64",
-                "media_type": img.media_type,
-                "data": img.data,
+fn build_user_message(text: &str, attachments: &[UserAttachment]) -> Option<Value> {
+    let mut content: Vec<Value> = Vec::with_capacity(attachments.len() + 1);
+    for att in attachments {
+        match att {
+            UserAttachment::Image { media_type, data, .. } => {
+                content.push(json!({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": data,
+                    }
+                }));
             }
-        }));
+            UserAttachment::Pdf { media_type, data, name } => {
+                let mut doc = json!({
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type.as_deref().unwrap_or("application/pdf"),
+                        "data": data,
+                    }
+                });
+                if let Some(n) = name {
+                    doc["title"] = json!(n);
+                }
+                content.push(doc);
+            }
+            UserAttachment::Text { text: body, name, .. } => {
+                // Inline the file's contents as a fenced text block so the model
+                // sees it as part of the user's turn. Header gives it a filename.
+                let label = name.as_deref().unwrap_or("file");
+                let inlined = format!("=== {label} ===\n{body}");
+                content.push(json!({ "type": "text", "text": inlined }));
+            }
+        }
     }
     if !text.is_empty() {
         content.push(json!({ "type": "text", "text": text }));

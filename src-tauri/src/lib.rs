@@ -4,7 +4,7 @@ mod mcp_config;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agent::{AgentSession, ImageAttachment};
+use agent::{AgentSession, UserAttachment};
 use tauri::{AppHandle, State};
 use tokio::sync::Mutex;
 
@@ -18,7 +18,7 @@ async fn send_message(
     app: AppHandle,
     state: State<'_, Arc<AppState>>,
     text: String,
-    attachments: Option<Vec<ImageAttachment>>,
+    attachments: Option<Vec<UserAttachment>>,
     working_dir: Option<String>,
     permission_mode: Option<String>,
 ) -> Result<String, String> {
@@ -34,9 +34,9 @@ async fn send_message(
         *guard = Some(AgentSession::new(app.clone(), cwd, mcp_cfg, mode));
     }
     let session = guard.as_ref().unwrap();
-    let imgs = attachments.unwrap_or_default();
+    let atts = attachments.unwrap_or_default();
     session
-        .send_user_message(&text, &imgs)
+        .send_user_message(&text, &atts)
         .await
         .map_err(|e| e.to_string())?;
     Ok(session.local_id.clone())

@@ -1,4 +1,4 @@
-import { For } from "solid-js";
+import { For, Show } from "solid-js";
 import type { Attachment } from "../types";
 
 export function AttachmentStrip(props: {
@@ -9,8 +9,28 @@ export function AttachmentStrip(props: {
     <div class="attach-strip" classList={{ empty: props.items.length === 0 }}>
       <For each={props.items}>
         {(a) => (
-          <div class="attach-chip" title={`${a.name ?? "image"} · ${formatSize(a.size)}`}>
-            <img src={a.dataUrl} alt={a.name ?? "attachment"} />
+          <div
+            class="attach-chip"
+            classList={{ "attach-file": a.kind !== "image" }}
+            title={`${a.name} · ${formatSize(a.size)}`}
+          >
+            <Show
+              when={a.kind === "image"}
+              fallback={
+                <div class="attach-file-body">
+                  <div class="attach-file-icon">{iconFor(a)}</div>
+                  <div class="attach-file-meta">
+                    <div class="attach-file-name">{a.name}</div>
+                    <div class="attach-file-size">{formatSize(a.size)}</div>
+                  </div>
+                </div>
+              }
+            >
+              <img
+                src={(a as Extract<Attachment, { kind: "image" }>).dataUrl}
+                alt={a.name}
+              />
+            </Show>
             <button
               type="button"
               class="attach-remove"
@@ -24,6 +44,16 @@ export function AttachmentStrip(props: {
       </For>
     </div>
   );
+}
+
+function iconFor(a: Attachment): string {
+  if (a.kind === "pdf") return "PDF";
+  // Extension as a tiny badge, falls back to "TXT".
+  const i = a.name.lastIndexOf(".");
+  if (i >= 0 && i < a.name.length - 1) {
+    return a.name.slice(i + 1).toUpperCase().slice(0, 4);
+  }
+  return "TXT";
 }
 
 function formatSize(n: number): string {
