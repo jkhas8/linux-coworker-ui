@@ -185,7 +185,9 @@ fn build_user_message(text: &str, attachments: &[UserAttachment]) -> Option<Valu
     let mut content: Vec<Value> = Vec::with_capacity(attachments.len() + 1);
     for att in attachments {
         match att {
-            UserAttachment::Image { media_type, data, .. } => {
+            UserAttachment::Image {
+                media_type, data, ..
+            } => {
                 content.push(json!({
                     "type": "image",
                     "source": {
@@ -195,7 +197,11 @@ fn build_user_message(text: &str, attachments: &[UserAttachment]) -> Option<Valu
                     }
                 }));
             }
-            UserAttachment::Pdf { media_type, data, name } => {
+            UserAttachment::Pdf {
+                media_type,
+                data,
+                name,
+            } => {
                 let mut doc = json!({
                     "type": "document",
                     "source": {
@@ -209,7 +215,9 @@ fn build_user_message(text: &str, attachments: &[UserAttachment]) -> Option<Valu
                 }
                 content.push(doc);
             }
-            UserAttachment::Text { text: body, name, .. } => {
+            UserAttachment::Text {
+                text: body, name, ..
+            } => {
                 // Inline the file's contents as a fenced text block so the model
                 // sees it as part of the user's turn. Header gives it a filename.
                 let label = name.as_deref().unwrap_or("file");
