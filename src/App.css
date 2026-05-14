@@ -755,6 +755,53 @@ body,
   object-fit: cover;
   display: block;
 }
+.attach-chip.attach-file {
+  width: 200px;
+  height: auto;
+  min-height: 52px;
+  padding: 8px 10px;
+  background: #1a1d24;
+}
+.attach-file-body {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 100%;
+  min-width: 0;
+}
+.attach-file-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  background: #20232a;
+  border: 1px solid #2a2d33;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: #8fb4ff;
+  letter-spacing: 0.02em;
+}
+.attach-file-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.attach-file-name {
+  font-size: 12.5px;
+  color: #d6d8de;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 130px;
+}
+.attach-file-size {
+  font-size: 11px;
+  color: #6e7279;
+}
 .attach-remove {
   position: absolute;
   top: 2px;
@@ -785,6 +832,51 @@ body,
   border: 1px solid #262932;
   background: #0f1217;
   display: block;
+}
+
+/* user-attached non-image file rendered in the message log */
+.msg-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: #20232a;
+  border: 1px solid #262932;
+  border-radius: 10px;
+  max-width: 100%;
+}
+.msg-file-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  background: #14171f;
+  border: 1px solid #2a2d33;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: #8fb4ff;
+  letter-spacing: 0.02em;
+}
+.msg-file-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.msg-file-name {
+  font-size: 13px;
+  color: #d6d8de;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 360px;
+}
+.msg-file-size {
+  font-size: 11px;
+  color: #6e7279;
 }
 
 .empty-hint {

@@ -9,7 +9,11 @@ import { AnswerSection } from "./components/AnswerSection";
 import { AskQuestionForm } from "./components/AskQuestion";
 import { AttachmentStrip } from "./components/Attachments";
 import { FilePreview } from "./components/FilePreview";
-import { fileToAttachment, imagesFromDataTransfer } from "./attachments";
+import {
+  fileToAttachment,
+  filesFromDataTransfer,
+  imagesFromDataTransfer,
+} from "./attachments";
 import "./App.css";
 
 function App() {
@@ -159,9 +163,9 @@ function App() {
   async function onDrop(e: DragEvent) {
     e.preventDefault();
     setDragOver(false);
-    const imgs = imagesFromDataTransfer(e.dataTransfer);
-    if (imgs.length === 0) return;
-    await addFiles(imgs);
+    const files = filesFromDataTransfer(e.dataTransfer);
+    if (files.length === 0) return;
+    await addFiles(files);
   }
 
   async function onPickFile(e: Event) {
@@ -183,13 +187,23 @@ function App() {
     setBlocks((prev) => {
       const next: DisplayBlock[] = [...prev];
       for (const a of atts) {
-        next.push({
-          kind: "image",
-          role: "user",
-          mimeType: a.mimeType,
-          data: a.data,
-          alt: a.name,
-        });
+        if (a.kind === "image") {
+          next.push({
+            kind: "image",
+            role: "user",
+            mimeType: a.mimeType,
+            data: a.data,
+            alt: a.name,
+          });
+        } else {
+          next.push({
+            kind: "file",
+            role: "user",
+            name: a.name,
+            mimeType: a.mimeType,
+            size: a.size,
+          });
+        }
       }
       if (text) next.push({ kind: "text", role: "user", text });
       return next;
@@ -200,7 +214,7 @@ function App() {
     try {
       await invoke("send_message", {
         text,
-        attachments: atts.map((a) => ({ mediaType: a.mimeType, data: a.data })),
+        attachments: atts.map(toBackendAttachment),
       });
     } catch (err) {
       setBlocks((prev) => [...prev, { kind: "error", text: String(err) }]);
@@ -226,14 +240,21 @@ function App() {
     setBusy(true);
     invoke("send_message", {
       text: payload.text,
-      attachments: payload.attachments.map((a) => ({
-        mediaType: a.mimeType,
-        data: a.data,
-      })),
+      attachments: payload.attachments.map(toBackendAttachment),
     }).catch((err) => {
       setBlocks((prev) => [...prev, { kind: "error", text: String(err) }]);
       setBusy(false);
     });
+  }
+
+  function toBackendAttachment(a: Attachment) {
+    if (a.kind === "image") {
+      return { kind: "image", mediaType: a.mimeType, data: a.data, name: a.name };
+    }
+    if (a.kind === "pdf") {
+      return { kind: "pdf", mediaType: a.mimeType, data: a.data, name: a.name };
+    }
+    return { kind: "text", mediaType: a.mimeType, text: a.text, name: a.name };
   }
 
   return (
@@ -264,7 +285,7 @@ function App() {
             edit files, take a screenshot, click, and type.
             <br />
             <span class="empty-hint">
-              Paste an image, drop a file, or click 📎 to attach.
+              Paste an image, drop files (images, PDFs, text/code), or click 📎.
             </span>
           </div>
         </Show>
@@ -296,7 +317,7 @@ function App() {
           <button
             type="button"
             class="attach-btn"
-            title="Attach image"
+            title="Attach file (image, PDF, text/code)"
             onClick={() => fileInputEl?.click()}
           >
             📎
@@ -304,7 +325,6 @@ function App() {
           <input
             ref={fileInputEl}
             type="file"
-            accept="image/png,image/jpeg,image/gif,image/webp"
             multiple
             hidden
             onChange={onPickFile}
@@ -319,7 +339,7 @@ function App() {
                 send(e);
               }
             }}
-            placeholder="Tell the agent what to do…  (Shift+Enter for newline · paste/drop images)"
+            placeholder="Tell the agent what to do…  (Shift+Enter for newline · paste images · drop files)"
             rows={3}
           />
           <button
@@ -421,6 +441,31 @@ function BlockView(props: {
           );
         })()}
       </Show>
+      <Show when={b().kind === "file"}>
+        {(() => {
+          const f = b() as Extract<DisplayBlock, { kind: "file" }>;
+          const label =
+            f.mimeType === "application/pdf"
+              ? "PDF"
+              : f.name.includes(".")
+                ? f.name.split(".").pop()!.toUpperCase().slice(0, 4)
+                : "TXT";
+          return (
+            <div class={`msg ${f.role}`}>
+              <div class="role">{f.role}</div>
+              <div class="text">
+                <div class="msg-file" title={`${f.name} · ${f.mimeType}`}>
+                  <div class="msg-file-icon">{label}</div>
+                  <div class="msg-file-meta">
+                    <div class="msg-file-name">{f.name}</div>
+                    <div class="msg-file-size">{formatBytes(f.size)}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+      </Show>
       <Show when={b().kind === "tool_call"}>
         <ToolCallCard call={(b() as any).call} onPreview={props.onPreview} />
       </Show>
@@ -447,6 +492,12 @@ function BlockView(props: {
       </Show>
     </>
   );
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
 export default App;

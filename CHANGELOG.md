@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Attachments now accept more than just images. Drag-drop or the 📎 picker
+  takes PDFs (sent as Anthropic `document` content blocks), text/code files
+  (decoded as UTF-8 and inlined as a fenced text block with a filename
+  header), and spreadsheets (`.xlsx`, `.xls`, `.xlsm`, `.xlsb`, `.ods`,
+  `.fods`) which are parsed client-side via SheetJS and converted to CSV per
+  sheet before being inlined as text.
+- Non-image attachments render as a file chip (extension badge + filename +
+  size) both in the composer strip and in the chat log.
+
+### Changed
+- The `Attachment` type is now a discriminated union (`image | pdf | text`).
+  The Tauri backend's `UserAttachment` is a matching tagged enum; the
+  message builder dispatches per kind to emit the right Anthropic content
+  block (`image`, `document`, or `text`).
+- Unsupported-file error message now lists what *is* supported instead of
+  just naming the rejected MIME type.
+
 ### Fixed
 - Clicking **+ New** to start a fresh conversation now also closes the
   split-pane file preview. Previously the right-side preview panel stayed

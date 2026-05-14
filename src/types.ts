@@ -36,6 +36,7 @@ export type DisplayBlock =
   | { kind: "text"; role: Role; text: string; cancelled?: boolean }
   | { kind: "thinking"; text: string; redacted?: boolean }
   | { kind: "image"; role: Role; mimeType: string; data: string; alt?: string }
+  | { kind: "file"; role: Role; name: string; mimeType: string; size: number }
   | { kind: "tool_call"; call: ToolCall }
   | { kind: "tool_result"; result: ToolResult }
   | {
@@ -47,14 +48,34 @@ export type DisplayBlock =
   | { kind: "system"; text: string }
   | { kind: "error"; text: string };
 
-export interface Attachment {
+export type AttachmentKind = "image" | "pdf" | "text";
+
+interface AttachmentBase {
   id: string;
-  name?: string;
+  name: string;
   mimeType: string;
+  /** byte length of the original file */
+  size: number;
+}
+
+export interface ImageAttachment extends AttachmentBase {
+  kind: "image";
   /** base64-encoded image bytes (no data: prefix) */
   data: string;
   /** ready-to-render data: URL, derived from mimeType + data */
   dataUrl: string;
-  /** byte length of the original file */
-  size: number;
 }
+
+export interface PdfAttachment extends AttachmentBase {
+  kind: "pdf";
+  /** base64-encoded PDF bytes */
+  data: string;
+}
+
+export interface TextAttachment extends AttachmentBase {
+  kind: "text";
+  /** decoded UTF-8 text contents */
+  text: string;
+}
+
+export type Attachment = ImageAttachment | PdfAttachment | TextAttachment;
