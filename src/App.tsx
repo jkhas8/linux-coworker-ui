@@ -5,6 +5,7 @@ import { eventToBlocks } from "./stream";
 import type {
   AgentEvent,
   Attachment,
+  ConversationSummary,
   DisplayBlock,
   Workspace,
 } from "./types";
@@ -14,6 +15,7 @@ import { AnswerSection } from "./components/AnswerSection";
 import { AskQuestionForm } from "./components/AskQuestion";
 import { AttachmentStrip } from "./components/Attachments";
 import { FilePreview } from "./components/FilePreview";
+import { ConversationRail } from "./components/ConversationRail";
 import { FirstLaunch } from "./components/FirstLaunch";
 import { WorkspacePicker } from "./components/WorkspacePicker";
 import {
@@ -23,8 +25,11 @@ import {
 } from "./attachments";
 import {
   createWorkspace,
+  deleteConversation,
   getActiveWorkspace,
+  listConversations,
   listWorkspaces,
+  renameConversation,
   setActiveWorkspace,
 } from "./workspaces";
 import "./App.css";
@@ -41,6 +46,13 @@ function App() {
   // Workspace state (Story 06).
   const [workspaces, setWorkspaces] = createSignal<Workspace[]>([]);
   const [activeWorkspace, setActiveWs] = createSignal<Workspace | null>(null);
+  // Conversation rail (Story 07).
+  const [conversations, setConversations] = createSignal<
+    ConversationSummary[]
+  >([]);
+  const [activeConversationId, setActiveConversationId] = createSignal<
+    string | null
+  >(null);
   // Last user payload, kept so the Retry button can re-send after a stop.
   let lastPayload: { text: string; attachments: Attachment[] } | null = null;
 
@@ -64,6 +76,58 @@ function App() {
       ]);
       setWorkspaces(ws);
       setActiveWs(active);
+      if (active) {
+        await refreshConversations(active.id);
+      } else {
+        setConversations([]);
+        setActiveConversationId(null);
+      }
+    } catch (err) {
+      setBlocks((prev) => [...prev, { kind: "error", text: String(err) }]);
+    }
+  }
+
+  async function refreshConversations(workspaceId: string) {
+    try {
+      const list = await listConversations(workspaceId);
+      setConversations(list);
+    } catch (err) {
+      setBlocks((prev) => [...prev, { kind: "error", text: String(err) }]);
+    }
+  }
+
+  function onSelectConversation(_id: string) {
+    // Reopen flow lands in Story 09. For now, no-op: the rail click
+    // wires through so the user sees their click registered but state
+    // doesn't change yet.
+  }
+
+  async function onRenameConversation(id: string, currentTitle: string) {
+    const newTitle = window.prompt("Rename conversation", currentTitle);
+    if (!newTitle || !newTitle.trim()) return;
+    const ws = activeWorkspace();
+    if (!ws) return;
+    try {
+      await renameConversation(ws.id, id, newTitle.trim());
+      await refreshConversations(ws.id);
+    } catch (err) {
+      setBlocks((prev) => [...prev, { kind: "error", text: String(err) }]);
+    }
+  }
+
+  async function onDeleteConversation(id: string) {
+    if (!window.confirm("Delete this conversation? This can't be undone.")) {
+      return;
+    }
+    const ws = activeWorkspace();
+    if (!ws) return;
+    try {
+      await deleteConversation(ws.id, id);
+      await refreshConversations(ws.id);
+      if (activeConversationId() === id) {
+        setBlocks([]);
+        setActiveConversationId(null);
+      }
     } catch (err) {
       setBlocks((prev) => [...prev, { kind: "error", text: String(err) }]);
     }
@@ -310,7 +374,13 @@ function App() {
   }
 
   return (
-    <main class="app" classList={{ "with-preview": !!previewPath() }}>
+    <main
+      class="app"
+      classList={{
+        "with-preview": !!previewPath(),
+        "with-rail": !!activeWorkspace(),
+      }}
+    >
       <header class="header">
         <h1>linux coworker</h1>
         <Show
@@ -349,6 +419,15 @@ function App() {
       </header>
 
       <div class="content">
+      <Show when={activeWorkspace()}>
+        <ConversationRail
+          conversations={conversations()}
+          activeConversationId={activeConversationId()}
+          onSelect={onSelectConversation}
+          onRename={onRenameConversation}
+          onDelete={onDeleteConversation}
+        />
+      </Show>
       <section class="chat-pane">
       <Show
         when={activeWorkspace()}
