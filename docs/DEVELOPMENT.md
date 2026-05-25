@@ -467,8 +467,10 @@ business logic):
   subprocess), which are out of scope for the per-PR unit gate. Any
   pure helpers in this file (e.g. `build_user_message`) can still be
   unit-tested directly.
-- Frontend: `src/vite-env.d.ts`, `src/index.tsx`, and `*.test.{ts,tsx}`
-  files (configured in `vitest.config.ts`).
+- Frontend: `src/vite-env.d.ts`, `src/index.tsx`, `src/App.tsx`
+  (Tauri-shell-equivalent wiring), `src/workspaces.ts` (pure
+  `invoke<T>()` wrappers), and `*.test.{ts,tsx}` files (configured in
+  `vitest.config.ts`).
 
 If you add business logic that genuinely belongs in one of these files,
 move it into a sibling module and unit-test it there.

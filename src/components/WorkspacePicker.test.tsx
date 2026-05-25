@@ -132,4 +132,25 @@ describe("<WorkspacePicker>", () => {
     fireEvent.click(screen.getByText("Manage workspaces…"));
     expect(onManage).toHaveBeenCalled();
   });
+
+  it("closes the menu when the user clicks outside the picker", async () => {
+    const a = makeWorkspace();
+    render(() => (
+      <WorkspacePicker
+        active={a}
+        workspaces={[a]}
+        onSwitch={vi.fn()}
+        onCreate={vi.fn()}
+        onManage={vi.fn()}
+      />
+    ));
+    fireEvent.click(screen.getByText("alpha"));
+    expect(screen.queryByRole("menu")).toBeTruthy();
+    // The doc-click handler is registered in a microtask so the same
+    // click doesn't close the freshly-opened menu — flush it.
+    await Promise.resolve();
+    // Click somewhere outside the picker.
+    fireEvent.click(document.body);
+    expect(screen.queryByRole("menu")).toBeFalsy();
+  });
 });
