@@ -33,3 +33,6 @@ bun-debug.log*
 
 # Local spec breakdowns (not part of the published repo)
 docs/specs/
+
+# Coverage reports
+coverage/

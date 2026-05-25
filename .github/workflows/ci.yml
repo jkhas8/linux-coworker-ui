@@ -11,10 +11,12 @@ concurrency:
 
 jobs:
   rust:
-    name: Rust check + clippy
+    name: Rust check + clippy + tests + coverage
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # diff-cover needs full history to compare against the merge base
 
       - name: Install system deps
         run: |
@@ -26,9 +28,14 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy, rustfmt
+          components: clippy, rustfmt, llvm-tools-preview
 
       - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
 
       - name: cargo fmt
         run: cargo fmt --all -- --check
@@ -45,11 +52,21 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: cargo test
-        run: cargo test --workspace --no-fail-fast
+      - name: cargo llvm-cov (runs tests + emits lcov)
+        run: |
+          mkdir -p coverage
+          cargo llvm-cov --workspace --no-fail-fast --lcov \
+            --output-path coverage/rust.lcov.info
+
+      - name: Upload Rust coverage
+        uses: actions/upload-artifact@v7
+        with:
+          name: rust-coverage
+          path: coverage/rust.lcov.info
+          if-no-files-found: error
 
   frontend:
-    name: Frontend typecheck + build
+    name: Frontend typecheck + tests + build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -64,5 +81,64 @@ jobs:
       - name: tsc
         run: bun x tsc --noEmit
 
+      - name: vitest (with coverage)
+        run: bun run test:coverage
+
       - name: vite build
         run: bun run build
+
+      - name: Upload frontend coverage
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-coverage
+          path: coverage/lcov.info
+          if-no-files-found: error
+
+  diff-coverage-gate:
+    name: Diff coverage >= 90%
+    needs: [rust, frontend]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # diff-cover walks history to find the merge base
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install diff-cover
+        run: pip install "diff-cover>=9"
+
+      - name: Download Rust coverage
+        uses: actions/download-artifact@v7
+        with:
+          name: rust-coverage
+          path: coverage/
+
+      - name: Download frontend coverage
+        uses: actions/download-artifact@v7
+        with:
+          name: frontend-coverage
+          path: coverage/frontend/
+
+      - name: Compute merge base
+        id: base
+        run: |
+          BASE_SHA=$(git merge-base origin/${{ github.base_ref }} HEAD)
+          echo "base=$BASE_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Rust diff-cover gate (>=90%)
+        run: |
+          diff-cover coverage/rust.lcov.info \
+            --compare-branch=${{ steps.base.outputs.base }} \
+            --fail-under=90 \
+            --include="src-tauri/src/**/*.rs" "crates/**/src/**/*.rs"
+
+      - name: Frontend diff-cover gate (>=90%)
+        run: |
+          diff-cover coverage/frontend/lcov.info \
+            --compare-branch=${{ steps.base.outputs.base }} \
+            --fail-under=90 \
+            --include="src/**/*.ts" "src/**/*.tsx"

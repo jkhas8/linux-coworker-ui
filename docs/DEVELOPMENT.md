@@ -420,30 +420,51 @@ In rough priority order:
 
 ## 13. Testing strategy
 
-We have no automated tests yet. Planned coverage when we add them:
+### Stack
 
-- **MCP server**: integration tests that spawn the binary, exchange the
-  protocol handshake, and call each tool with mocked `xdotool` / `wmctrl`
-  shims on `$PATH` (Cargo `tests/` dir).
-- **Agent supervisor**: feed a recorded `claude` stdout fixture into
-  `spawn_reader` and assert events arrive in order. Pull `agent.rs` apart
-  to test without spawning a real subprocess.
-- **`stream.ts`**: pure function; trivial to snapshot-test with Vitest
-  against fixture lines.
-- **End-to-end**: scripted prompts that exercise file ops and a screenshot,
-  asserting on rendered DOM via Playwright pointed at the Vite dev server
-  (run the backend separately).
+- **Frontend**: [Vitest](https://vitest.dev/) + jsdom + Solid Testing
+  Library. Tests live next to the file under test as
+  `<name>.test.ts` / `<name>.test.tsx`.
+- **Rust**: built-in `cargo test`. Unit tests live in a `#[cfg(test)] mod
+  tests` at the bottom of each module; integration tests under
+  `<crate>/tests/`.
+- **Coverage**: V8 (frontend, via `@vitest/coverage-v8`) + LLVM source-
+  based coverage (Rust, via
+  [`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov)). Both
+  emit lcov files.
 
-Until that exists, manual smoke test:
+### Commands
 
-1. `bun run tauri dev`
-2. Prompt: *"take a screenshot and tell me what app is focused"* — verify a
-   `screenshot` tool card renders, an image appears in the result, the
-   assistant reads it.
-3. Prompt: *"create a file ~/tmp/hello.txt with 'hi'"* — verify `Write`
-   card renders with the file path summary; file exists on disk.
-4. Prompt: *"list windows"* — verify `mcp__linux_control__list_windows` (or
-   the prettified "linux_control · list_windows") renders.
+| Goal | Command |
+|---|---|
+| Run all frontend tests | `bun run test` |
+| Watch frontend tests | `bun run test:watch` |
+| Frontend tests + coverage | `bun run test:coverage` |
+| Run all Rust tests | `cargo test --workspace` |
+| Rust tests + coverage | `cargo llvm-cov --workspace --lcov --output-path coverage/rust.lcov.info` |
+
+### Coverage policy
+
+**New or modified code must reach >90% line and branch coverage.** The
+gate is enforced in CI (`.github/workflows/ci.yml`, `diff-coverage-gate`
+job) using
+[`diff-cover`](https://github.com/Bachmann1234/diff_cover) against the
+PR's merge base. A PR whose diff coverage drops below 90% will fail the
+build with a list of uncovered lines.
+
+The gate runs only on `pull_request` events — pushes to `main` are not
+gated (the gate's job is to keep new work covered, not to retroactively
+cover the existing codebase).
+
+### Manual smoke test
+
+When in doubt, run `bun run tauri dev` and exercise:
+
+1. *"take a screenshot and tell me what app is focused"* — verify a
+   `screenshot` tool card renders and the assistant reads the image.
+2. *"create a file ~/tmp/hello.txt with 'hi'"* — verify the `Write` card
+   renders; file exists on disk.
+3. *"list windows"* — verify `mcp__linux_control__list_windows` renders.
 
 ---
 
