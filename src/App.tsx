@@ -30,6 +30,7 @@ import {
   getActiveWorkspace,
   listConversations,
   listWorkspaces,
+  loadConversation,
   renameConversation,
   setActiveWorkspace,
 } from "./workspaces";
@@ -102,10 +103,34 @@ function App() {
     }
   }
 
-  function onSelectConversation(_id: string) {
-    // Reopen flow lands in Story 09. For now, no-op: the rail click
-    // wires through so the user sees their click registered but state
-    // doesn't change yet.
+  async function onSelectConversation(id: string) {
+    const ws = activeWorkspace();
+    if (!ws) return;
+    // End any in-flight session first — we don't want events from a
+    // prior conversation leaking into the one being opened.
+    try {
+      await invoke("end_session");
+    } catch {
+      /* no session to end is fine */
+    }
+    setBusy(false);
+    try {
+      const loaded = await loadConversation(ws.id, id);
+      const replayed: DisplayBlock[] = [];
+      for (const ev of loaded.events) {
+        replayed.push(...eventToBlocks(ev));
+      }
+      if (loaded.truncated_at_line != null) {
+        replayed.push({
+          kind: "error",
+          text: `Conversation log was truncated at line ${loaded.truncated_at_line}; earlier events shown above.`,
+        });
+      }
+      setBlocks(replayed);
+      setActiveConversationId(id);
+    } catch (err) {
+      setBlocks([{ kind: "error", text: String(err) }]);
+    }
   }
 
   async function onRenameConversation(id: string, currentTitle: string) {
@@ -278,6 +303,7 @@ function App() {
     setAttachments([]);
     setBusy(false);
     setPreviewPath(null);
+    setActiveConversationId(null);
     invoke("end_session").catch(() => {
       /* session may not have been started — fine */
     });

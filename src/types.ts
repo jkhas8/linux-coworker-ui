@@ -67,6 +67,13 @@ export interface ConversationSummary {
   title_pinned: boolean;
 }
 
+export interface LoadedConversation {
+  events: any[];
+  /** 1-based line number where parsing stopped, when the jsonl had a
+   *  partial trailing line. `null` means the file was clean. */
+  truncated_at_line: number | null;
+}
+
 interface AttachmentBase {
   id: string;
   name: string;
