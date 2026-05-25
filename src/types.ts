@@ -50,6 +50,23 @@ export type DisplayBlock =
 
 export type AttachmentKind = "image" | "pdf" | "text";
 
+export interface Workspace {
+  id: string;
+  name: string;
+  path: string;
+  /** Unix timestamp in milliseconds. */
+  last_used_at: number;
+}
+
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  started_at: number;
+  last_active_at: number;
+  claude_session_id: string | null;
+  title_pinned: boolean;
+}
+
 interface AttachmentBase {
   id: string;
   name: string;
