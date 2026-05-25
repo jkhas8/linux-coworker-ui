@@ -406,7 +406,7 @@ impl Storage {
     /// active first.
     pub fn list_conversations(&self, workspace_id: &str) -> Result<Vec<ConversationSummary>> {
         let mut list = self.load_conversation_index(workspace_id)?;
-        list.sort_by(|a, b| b.last_active_at.cmp(&a.last_active_at));
+        list.sort_by_key(|c| std::cmp::Reverse(c.last_active_at));
         Ok(list)
     }
 
