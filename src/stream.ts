@@ -48,6 +48,11 @@ export function eventToBlocks(raw: any): DisplayBlock[] {
     case "rate_limit_event":
       // Informational / streaming deltas — drop quietly.
       return [];
+    case "resume_failure":
+      // Backend-synthesized signal (Story 11). The App-level handler
+      // listens for this directly to render a recovery banner; we
+      // suppress it from the chat log so it doesn't double-render.
+      return [];
     default:
       // eslint-disable-next-line no-console
       console.warn("[stream] unknown top-level event", raw.type, raw);

@@ -18,6 +18,7 @@ import { FilePreview } from "./components/FilePreview";
 import { ConfirmSwitchModal } from "./components/ConfirmSwitchModal";
 import { ConversationRail } from "./components/ConversationRail";
 import { FirstLaunch } from "./components/FirstLaunch";
+import { ResumeFailureBanner } from "./components/ResumeFailureBanner";
 import { WorkspacePicker } from "./components/WorkspacePicker";
 import {
   fileToAttachment,
@@ -60,6 +61,10 @@ function App() {
   const [pendingSwitch, setPendingSwitch] = createSignal<Workspace | null>(
     null,
   );
+  // Resume-failure banner state (Story 11). When true, the banner is
+  // visible above the chat and the user can pick "Continue fresh" to
+  // start a new Claude session for this conversation.
+  const [showResumeFailure, setShowResumeFailure] = createSignal(false);
   // Last user payload, kept so the Retry button can re-send after a stop.
   let lastPayload: { text: string; attachments: Attachment[] } | null = null;
 
@@ -146,6 +151,30 @@ function App() {
     }
   }
 
+  function onContinueFresh() {
+    setShowResumeFailure(false);
+    // Replay the last user payload with force_new_session so the backend
+    // starts a fresh claude session for this conversation.
+    if (!lastPayload) return;
+    const payload = lastPayload;
+    setBusy(true);
+    // End the dead session before retrying so the next send rebuilds it.
+    invoke("end_session")
+      .catch(() => {})
+      .then(() =>
+        invoke("send_message", {
+          text: payload.text,
+          attachments: payload.attachments.map(toBackendAttachment),
+          conversationId: activeConversationId() ?? undefined,
+          forceNewSession: true,
+        }),
+      )
+      .catch((err) => {
+        setBlocks((prev) => [...prev, { kind: "error", text: String(err) }]);
+        setBusy(false);
+      });
+  }
+
   async function onDeleteConversation(id: string) {
     if (!window.confirm("Delete this conversation? This can't be undone.")) {
       return;
@@ -210,6 +239,13 @@ function App() {
   onMount(async () => {
     await refreshWorkspaces();
     unlisten = await listen<AgentEvent>("claude://event", (e) => {
+      // Backend-synthesized resume-failure signal (Story 11). Surface the
+      // recovery banner and stop processing this event further.
+      if (e.payload.raw?.type === "resume_failure") {
+        setShowResumeFailure(true);
+        setBusy(false);
+        return;
+      }
       const next = eventToBlocks(e.payload.raw);
       if (next.length === 0) return;
       setBlocks((prev) => {
@@ -491,6 +527,12 @@ function App() {
         when={activeWorkspace()}
         fallback={<FirstLaunch onCreate={onCreateFirstWorkspace} />}
       >
+      <Show when={showResumeFailure()}>
+        <ResumeFailureBanner
+          onContinueFresh={onContinueFresh}
+          onDismiss={() => setShowResumeFailure(false)}
+        />
+      </Show>
       <div class="log" ref={logEl}>
         <Show when={blocks().length === 0}>
           <div class="empty">

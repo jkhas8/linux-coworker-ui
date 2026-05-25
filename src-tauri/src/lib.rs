@@ -33,6 +33,13 @@ async fn storage_for(app: &AppHandle, state: &Arc<AppState>) -> Result<Storage, 
 /// `conversation_id` (Story 09's reopen flow): when set, the message
 /// continues an existing persisted conversation — events append to its
 /// jsonl and `claude` is spawned with `--resume <stored_session_id>`.
+///
+/// `force_new_session` (Story 11's resume-failure recovery): when true,
+/// the conversation's stored session id is cleared first so the next
+/// spawn starts a fresh claude session. Events still append to the
+/// same conversation file; the new session id replaces the old one in
+/// the index on first init.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 async fn send_message(
     app: AppHandle,
@@ -42,6 +49,7 @@ async fn send_message(
     working_dir: Option<String>,
     permission_mode: Option<String>,
     conversation_id: Option<String>,
+    force_new_session: Option<bool>,
 ) -> Result<String, String> {
     // Working-dir resolution order:
     //   1. Explicit `working_dir` argument (legacy callers; tests).
@@ -84,8 +92,9 @@ async fn send_message(
 
             // If this conversation already has a persisted Claude session
             // id, seed the AgentSession so the next spawn uses
-            // `--resume <sid>`.
-            let resume_sid = if conversation_id.is_some() {
+            // `--resume <sid>`. Story 11's recovery path can force a
+            // fresh session by setting `force_new_session=true`.
+            let resume_sid = if conversation_id.is_some() && !force_new_session.unwrap_or(false) {
                 let storage_for_lookup = storage.clone();
                 let ws_id = ws.id.clone();
                 let convo_for_lookup = convo_id.clone();
