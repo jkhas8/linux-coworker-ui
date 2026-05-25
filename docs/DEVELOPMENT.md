@@ -456,6 +456,18 @@ The gate runs only on `pull_request` events — pushes to `main` are not
 gated (the gate's job is to keep new work covered, not to retroactively
 cover the existing codebase).
 
+**Excluded from coverage** (treated as framework glue, not business
+logic):
+
+- `src-tauri/src/lib.rs` and `src-tauri/src/main.rs` — Tauri entry
+  points; commands declared here are thin wrappers around modules
+  (`storage.rs`, `agent.rs`, ...) that are themselves unit-tested.
+- Frontend: `src/vite-env.d.ts`, `src/index.tsx`, and `*.test.{ts,tsx}`
+  files (configured in `vitest.config.ts`).
+
+If you add business logic that genuinely belongs in one of these files,
+move it into a sibling module and unit-test it there.
+
 ### Manual smoke test
 
 When in doubt, run `bun run tauri dev` and exercise:
