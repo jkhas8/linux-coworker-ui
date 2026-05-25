@@ -41,16 +41,16 @@ async fn send_message(
     //   1. Explicit `working_dir` argument (legacy callers; tests).
     //   2. The active workspace's path (the workspaces flow).
     //   3. $HOME (fallback for users with no workspaces yet).
-    let cwd_from_active = if working_dir.is_none() {
+    let active_workspace = if working_dir.is_none() {
         let storage = storage_for(&app, &state).await?;
         tokio::task::spawn_blocking(move || storage.get_active_workspace())
             .await
             .map_err(|e| e.to_string())?
             .map_err(|e| e.to_string())?
-            .map(|w| w.path)
     } else {
         None
     };
+    let cwd_from_active = active_workspace.as_ref().map(|w| w.path.clone());
 
     let mut guard = state.session.lock().await;
     if guard.is_none() {
@@ -62,7 +62,29 @@ async fn send_message(
             .or_else(home_dir)
             .unwrap_or_else(|| PathBuf::from("."));
         let mode = permission_mode.as_deref().unwrap_or("bypassPermissions");
-        *guard = Some(AgentSession::new(app.clone(), cwd, mcp_cfg, mode));
+
+        let mut session = AgentSession::new(app.clone(), cwd, mcp_cfg, mode);
+
+        // If there's an active workspace, attach a conversation log so
+        // every streamed event gets persisted to disk for later replay.
+        if let Some(ws) = active_workspace.as_ref() {
+            let storage = storage_for(&app, &state).await?;
+            let workspace_id = ws.id.clone();
+            // Use the AgentSession's local_id as the conversation id —
+            // unique per session, easy to correlate with the in-memory
+            // state. Stories 04/05/09 build the index + reopen flow on
+            // top of these filenames.
+            let conversation_id = session.local_id.clone();
+            let log = tokio::task::spawn_blocking(move || {
+                storage.open_conversation(&workspace_id, &conversation_id)
+            })
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+            session = session.with_conversation_log(log);
+        }
+
+        *guard = Some(session);
     }
     let session = guard.as_ref().unwrap();
     let atts = attachments.unwrap_or_default();

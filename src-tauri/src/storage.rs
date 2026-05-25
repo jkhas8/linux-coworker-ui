@@ -3,20 +3,26 @@
 // Storage layout under `<root>`:
 //   workspaces.json                                  — array of Workspace
 //   active.json                                      — { active_id: Option<String> }
-//   workspaces/<workspace_id>/conversations/         — created lazily by later stories
+//   workspaces/<workspace_id>/conversations/
+//                <conversation_id>.jsonl            — append-only event log
 //
 // Both top-level JSON files are rewritten atomically (temp file + rename)
 // on every mutation so a crash leaves either the old file intact or the
-// new file fully written — never a half-written one.
+// new file fully written — never a half-written one. Conversation event
+// logs are append-only: every line is a complete JSON object terminated
+// by `\n`, so a crash mid-turn leaves a valid prefix that replays cleanly.
 //
 // All operations are synchronous. The Tauri commands wrap them in
 // `tokio::task::spawn_blocking` when called from async contexts.
 
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::fs;
+use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -217,6 +223,77 @@ impl Storage {
 
     fn write_workspaces(&self, list: &[Workspace]) -> Result<()> {
         write_json_atomic(&self.workspaces_path(), list)
+    }
+
+    /// Open (or create) the append-only event log for a conversation under
+    /// the given workspace. The conversations folder is created on demand.
+    pub fn open_conversation(
+        &self,
+        workspace_id: &str,
+        conversation_id: &str,
+    ) -> Result<ConversationLog> {
+        let dir = self.workspace_dir(workspace_id).join("conversations");
+        fs::create_dir_all(&dir).with_context(|| format!("create {:?}", dir))?;
+        let path = dir.join(format!("{conversation_id}.jsonl"));
+        Ok(ConversationLog::open(path))
+    }
+}
+
+/// Append-only event log for a single conversation. Cheap to clone (it's
+/// an `Arc` internally) so the agent's stream reader and any test harness
+/// can hold their own handles without contending on opens.
+///
+/// Writes are serialized via an internal mutex so concurrent
+/// `append_event` calls produce well-formed newline-terminated JSON lines
+/// in some order — never interleaved. A crash mid-write at most loses the
+/// trailing line; lines committed before the crash are valid prefix.
+#[derive(Debug, Clone)]
+pub struct ConversationLog {
+    path: PathBuf,
+    writer: Arc<Mutex<()>>,
+}
+
+impl ConversationLog {
+    fn open(path: PathBuf) -> Self {
+        Self {
+            path,
+            writer: Arc::new(Mutex::new(())),
+        }
+    }
+
+    #[allow(dead_code)] // used by tests + future stories (04, 09)
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Returns true if the log file has been created on disk (i.e. at
+    /// least one event has been appended).
+    #[allow(dead_code)] // used by tests + future stories (04, 09)
+    pub fn exists(&self) -> bool {
+        self.path.exists()
+    }
+
+    /// Append a single JSON event to the log as one newline-terminated
+    /// line. Creates the file on the first call.
+    pub fn append_event(&self, event: &Value) -> Result<()> {
+        let _guard = self
+            .writer
+            .lock()
+            .map_err(|_| anyhow!("conversation log mutex poisoned"))?;
+        let mut line = serde_json::to_vec(event).context("serialize event")?;
+        line.push(b'\n');
+        let mut f = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)
+            .with_context(|| format!("open {:?}", self.path))?;
+        f.write_all(&line)
+            .with_context(|| format!("append to {:?}", self.path))?;
+        // Best-effort flush; we don't fsync per event (expensive in a hot
+        // stream loop). A crash may lose the trailing N kB of the buffer
+        // but never produces a torn line, because each write() is atomic
+        // and we always end with `\n`.
+        Ok(())
     }
 }
 
@@ -491,6 +568,84 @@ mod tests {
             storage.get_active_workspace().unwrap().map(|w| w.id),
             Some(a.id)
         );
+    }
+
+    // ── ConversationLog ───────────────────────────────────────────────────
+
+    #[test]
+    fn conversation_log_does_not_create_file_until_first_event() {
+        let (storage, _root, target) = open_store();
+        let ws = storage.create_workspace("ws", target.path()).unwrap();
+        let log = storage.open_conversation(&ws.id, "conv-1").unwrap();
+        assert!(!log.exists(), "no file should exist before first event");
+    }
+
+    #[test]
+    fn conversation_log_appends_one_line_per_event() {
+        let (storage, _root, target) = open_store();
+        let ws = storage.create_workspace("ws", target.path()).unwrap();
+        let log = storage.open_conversation(&ws.id, "conv-1").unwrap();
+        log.append_event(&serde_json::json!({"type": "user", "text": "hi"}))
+            .unwrap();
+        log.append_event(&serde_json::json!({"type": "assistant", "text": "hello"}))
+            .unwrap();
+        let contents = fs::read_to_string(log.path()).unwrap();
+        let lines: Vec<&str> = contents.lines().collect();
+        assert_eq!(lines.len(), 2);
+        // Every line must parse back as JSON.
+        for line in &lines {
+            let _: Value = serde_json::from_str(line).expect("valid JSON line");
+        }
+        // Each line is newline-terminated (trailing `\n` after the last).
+        assert!(contents.ends_with('\n'));
+    }
+
+    #[test]
+    fn conversation_log_survives_concurrent_writes_without_interleaving() {
+        // Hammer the same log from N threads; assert every line is valid
+        // JSON afterwards.
+        let (storage, _root, target) = open_store();
+        let ws = storage.create_workspace("ws", target.path()).unwrap();
+        let log = storage.open_conversation(&ws.id, "conv-1").unwrap();
+        let mut handles = Vec::new();
+        for thread_id in 0..8 {
+            let log = log.clone();
+            handles.push(std::thread::spawn(move || {
+                for i in 0..50 {
+                    log.append_event(&serde_json::json!({
+                        "thread": thread_id,
+                        "i": i,
+                    }))
+                    .unwrap();
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+        let contents = fs::read_to_string(log.path()).unwrap();
+        let lines: Vec<&str> = contents.lines().collect();
+        assert_eq!(lines.len(), 8 * 50);
+        for (i, line) in lines.iter().enumerate() {
+            serde_json::from_str::<Value>(line)
+                .unwrap_or_else(|_| panic!("line {i} not valid JSON: {line:?}"));
+        }
+    }
+
+    #[test]
+    fn conversation_log_lives_under_workspace_conversations_folder() {
+        let (storage, root, target) = open_store();
+        let ws = storage.create_workspace("ws", target.path()).unwrap();
+        let log = storage.open_conversation(&ws.id, "conv-1").unwrap();
+        log.append_event(&serde_json::json!({"x": 1})).unwrap();
+        let expected = root
+            .path()
+            .join("workspaces")
+            .join(&ws.id)
+            .join("conversations")
+            .join("conv-1.jsonl");
+        assert_eq!(log.path(), expected.as_path());
+        assert!(expected.exists());
     }
 
     #[test]

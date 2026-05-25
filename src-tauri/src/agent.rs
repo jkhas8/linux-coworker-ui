@@ -3,6 +3,7 @@
 // which keeps the conversation history while sidestepping the long-running
 // stdin pipe that `claude --print` doesn't reliably support for multi-turn.
 
+use crate::storage::ConversationLog;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -61,6 +62,10 @@ pub struct AgentSession {
     claude_session_id: Arc<Mutex<Option<String>>>,
     /// Currently running subprocess for the in-flight turn, if any.
     current: Arc<Mutex<Option<Child>>>,
+    /// Optional sink for persisting every stream event to disk. When None,
+    /// the session runs purely in-memory (legacy behaviour, useful in tests
+    /// and when no workspace is active).
+    conversation_log: Option<ConversationLog>,
     app: AppHandle,
 }
 
@@ -78,8 +83,16 @@ impl AgentSession {
             permission_mode: permission_mode.to_string(),
             claude_session_id: Arc::new(Mutex::new(None)),
             current: Arc::new(Mutex::new(None)),
+            conversation_log: None,
             app,
         }
+    }
+
+    /// Attach a conversation log: every non-stderr event the session
+    /// emits will be appended to it as a JSON line.
+    pub fn with_conversation_log(mut self, log: ConversationLog) -> Self {
+        self.conversation_log = Some(log);
+        self
     }
 
     pub async fn send_user_message(
@@ -145,6 +158,7 @@ impl AgentSession {
             self.local_id.clone(),
             self.claude_session_id.clone(),
             self.current.clone(),
+            self.conversation_log.clone(),
             stdout,
             false,
         );
@@ -153,6 +167,7 @@ impl AgentSession {
             self.local_id.clone(),
             self.claude_session_id.clone(),
             self.current.clone(),
+            self.conversation_log.clone(),
             stderr,
             true,
         );
@@ -243,6 +258,7 @@ fn spawn_reader<R>(
     local_id: String,
     claude_sid: Arc<Mutex<Option<String>>>,
     current: Arc<Mutex<Option<Child>>>,
+    conversation_log: Option<ConversationLog>,
     reader: R,
     is_stderr: bool,
 ) where
@@ -272,6 +288,17 @@ fn spawn_reader<R>(
                     if g.is_none() {
                         *g = Some(sid.to_string());
                         tracing::info!("captured claude session_id: {sid}");
+                    }
+                }
+            }
+
+            // Persist this event to the conversation log if one is
+            // attached. Skip stderr lines — those are framework noise that
+            // belongs in the UI's error rail, not in replayable history.
+            if !is_stderr {
+                if let Some(log) = conversation_log.as_ref() {
+                    if let Err(err) = log.append_event(&raw) {
+                        tracing::warn!(?err, "failed to append event to conversation log");
                     }
                 }
             }
