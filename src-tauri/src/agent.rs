@@ -9,6 +9,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -130,6 +131,12 @@ impl AgentSession {
 
         // Build argv. Reuse the existing claude session id if we have one.
         let resume = self.claude_session_id.lock().await.clone();
+        let used_resume = resume.is_some();
+        // Tracks whether the stream emitted a system/init event before
+        // claude exited. If we asked for --resume and the process dies
+        // without ever sending init, we infer a resume failure and emit
+        // a synthetic event so the frontend can surface a recovery banner.
+        let saw_init = Arc::new(AtomicBool::new(false));
 
         let mut cmd = Command::new("claude");
         cmd.current_dir(&self.working_dir)
@@ -183,6 +190,8 @@ impl AgentSession {
             self.conversation_log.clone(),
             stdout,
             false,
+            used_resume,
+            saw_init.clone(),
         );
         spawn_reader(
             self.app.clone(),
@@ -192,6 +201,8 @@ impl AgentSession {
             self.conversation_log.clone(),
             stderr,
             true,
+            used_resume,
+            saw_init,
         );
 
         Ok(())
@@ -275,6 +286,7 @@ fn build_user_message(text: &str, attachments: &[UserAttachment]) -> Option<Valu
     }))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_reader<R>(
     app: AppHandle,
     local_id: String,
@@ -283,6 +295,8 @@ fn spawn_reader<R>(
     conversation_log: Option<ConversationLog>,
     reader: R,
     is_stderr: bool,
+    used_resume: bool,
+    saw_init: Arc<AtomicBool>,
 ) where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
 {
@@ -305,6 +319,7 @@ fn spawn_reader<R>(
                 && raw.get("type").and_then(Value::as_str) == Some("system")
                 && raw.get("subtype").and_then(Value::as_str) == Some("init")
             {
+                saw_init.store(true, Ordering::SeqCst);
                 if let Some(sid) = raw.get("session_id").and_then(Value::as_str) {
                     let mut g = claude_sid.lock().await;
                     if g.is_none() {
@@ -340,6 +355,29 @@ fn spawn_reader<R>(
                     raw,
                 },
             );
+        }
+
+        // EOF on this stream. The stdout reader is the canonical place to
+        // observe the process exiting cleanly. If we asked claude to
+        // --resume an existing session AND it died before ever emitting
+        // `system/init`, that's a resume failure: surface it so the
+        // frontend can show a "Continue fresh" banner.
+        if !is_stderr && used_resume && !saw_init.load(Ordering::SeqCst) {
+            let mut cur = current.lock().await;
+            if let Some(mut c) = cur.take() {
+                let exit = c.wait().await;
+                let code = exit.ok().and_then(|s| s.code());
+                let _ = app.emit(
+                    EVENT_NAME,
+                    AgentEvent {
+                        session_id: local_id.clone(),
+                        raw: json!({
+                            "type": "resume_failure",
+                            "exit_code": code,
+                        }),
+                    },
+                );
+            }
         }
     });
 }
