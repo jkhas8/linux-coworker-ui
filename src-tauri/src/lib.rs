@@ -28,6 +28,11 @@ async fn storage_for(app: &AppHandle, state: &Arc<AppState>) -> Result<Storage, 
     Ok(guard.as_ref().unwrap().clone())
 }
 
+/// Send a user message to claude.
+///
+/// `conversation_id` (Story 09's reopen flow): when set, the message
+/// continues an existing persisted conversation — events append to its
+/// jsonl and `claude` is spawned with `--resume <stored_session_id>`.
 #[tauri::command]
 async fn send_message(
     app: AppHandle,
@@ -36,6 +41,7 @@ async fn send_message(
     attachments: Option<Vec<UserAttachment>>,
     working_dir: Option<String>,
     permission_mode: Option<String>,
+    conversation_id: Option<String>,
 ) -> Result<String, String> {
     // Working-dir resolution order:
     //   1. Explicit `working_dir` argument (legacy callers; tests).
@@ -69,14 +75,39 @@ async fn send_message(
         // every streamed event gets persisted to disk for later replay.
         if let Some(ws) = active_workspace.as_ref() {
             let storage = storage_for(&app, &state).await?;
+            // Pick the conversation id: continue an existing one if the
+            // caller (reopen flow) supplied it, else use AgentSession's
+            // local_id to start a fresh one.
+            let convo_id = conversation_id
+                .clone()
+                .unwrap_or_else(|| session.local_id.clone());
+
+            // If this conversation already has a persisted Claude session
+            // id, seed the AgentSession so the next spawn uses
+            // `--resume <sid>`.
+            let resume_sid = if conversation_id.is_some() {
+                let storage_for_lookup = storage.clone();
+                let ws_id = ws.id.clone();
+                let convo_for_lookup = convo_id.clone();
+                tokio::task::spawn_blocking(move || {
+                    storage_for_lookup
+                        .list_conversations(&ws_id)
+                        .map(|list| list.into_iter().find(|c| c.id == convo_for_lookup))
+                })
+                .await
+                .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())?
+                .and_then(|c| c.claude_session_id)
+            } else {
+                None
+            };
+            if let Some(sid) = resume_sid {
+                session = session.with_resume_session_id(sid);
+            }
+
             let workspace_id = ws.id.clone();
-            // Use the AgentSession's local_id as the conversation id —
-            // unique per session, easy to correlate with the in-memory
-            // state. Stories 04/05/09 build the index + reopen flow on
-            // top of these filenames.
-            let conversation_id = session.local_id.clone();
             let log = tokio::task::spawn_blocking(move || {
-                storage.open_conversation(&workspace_id, &conversation_id)
+                storage.open_conversation(&workspace_id, &convo_id)
             })
             .await
             .map_err(|e| e.to_string())?

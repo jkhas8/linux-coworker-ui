@@ -246,7 +246,10 @@ function App() {
     const text = lines.join("\n");
     setBusy(true);
     try {
-      await invoke("send_message", { text });
+      await invoke("send_message", {
+        text,
+        conversationId: activeConversationId() ?? undefined,
+      });
     } catch (err) {
       setBlocks((prev) => [...prev, { kind: "error", text: String(err) }]);
       setBusy(false);
@@ -384,6 +387,7 @@ function App() {
       await invoke("send_message", {
         text,
         attachments: atts.map(toBackendAttachment),
+        conversationId: activeConversationId() ?? undefined,
       });
     } catch (err) {
       setBlocks((prev) => [...prev, { kind: "error", text: String(err) }]);
@@ -410,6 +414,7 @@ function App() {
     invoke("send_message", {
       text: payload.text,
       attachments: payload.attachments.map(toBackendAttachment),
+      conversationId: activeConversationId() ?? undefined,
     }).catch((err) => {
       setBlocks((prev) => [...prev, { kind: "error", text: String(err) }]);
       setBusy(false);

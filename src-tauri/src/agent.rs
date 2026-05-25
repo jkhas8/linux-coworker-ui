@@ -95,6 +95,21 @@ impl AgentSession {
         self
     }
 
+    /// Seed the Claude Code session id this AgentSession should resume
+    /// from. Used by the reopen flow (Story 10) — when present, the very
+    /// first `send_user_message` spawns `claude` with
+    /// `--resume <session_id>` instead of starting a fresh session.
+    ///
+    /// Construction is single-owner so `try_lock` is safe here.
+    pub fn with_resume_session_id(self, session_id: String) -> Self {
+        if let Ok(mut g) = self.claude_session_id.try_lock() {
+            *g = Some(session_id);
+        } else {
+            tracing::warn!("with_resume_session_id: session lock contended; resume not seeded");
+        }
+        self
+    }
+
     pub async fn send_user_message(
         &self,
         text: &str,
@@ -105,6 +120,13 @@ impl AgentSession {
             return Ok(()); // nothing to send
         }
         let line = format!("{}\n", serde_json::to_string(&payload.unwrap())?);
+
+        // Refuse to spawn if the workspace's folder has disappeared since
+        // the workspace was created (user moved/deleted it). A friendly
+        // error is much better than the cryptic ENOENT claude would emit.
+        if !self.working_dir.is_dir() {
+            anyhow::bail!("workspace folder no longer exists: {:?}", self.working_dir);
+        }
 
         // Build argv. Reuse the existing claude session id if we have one.
         let resume = self.claude_session_id.lock().await.clone();
