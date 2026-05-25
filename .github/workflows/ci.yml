@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   rust:
-    name: Rust check + clippy + tests + coverage
+    name: Rust check + clippy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -66,7 +66,7 @@ jobs:
           if-no-files-found: error
 
   frontend:
-    name: Frontend typecheck + tests + build
+    name: Frontend typecheck + build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
