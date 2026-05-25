@@ -37,12 +37,28 @@ async fn send_message(
     working_dir: Option<String>,
     permission_mode: Option<String>,
 ) -> Result<String, String> {
+    // Working-dir resolution order:
+    //   1. Explicit `working_dir` argument (legacy callers; tests).
+    //   2. The active workspace's path (the workspaces flow).
+    //   3. $HOME (fallback for users with no workspaces yet).
+    let cwd_from_active = if working_dir.is_none() {
+        let storage = storage_for(&app, &state).await?;
+        tokio::task::spawn_blocking(move || storage.get_active_workspace())
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?
+            .map(|w| w.path)
+    } else {
+        None
+    };
+
     let mut guard = state.session.lock().await;
     if guard.is_none() {
         let server_bin = mcp_config::locate_server_binary().map_err(|e| e.to_string())?;
         let mcp_cfg = mcp_config::write_default_config(&server_bin).map_err(|e| e.to_string())?;
         let cwd = working_dir
             .map(PathBuf::from)
+            .or(cwd_from_active)
             .or_else(home_dir)
             .unwrap_or_else(|| PathBuf::from("."));
         let mode = permission_mode.as_deref().unwrap_or("bypassPermissions");
@@ -55,6 +71,16 @@ async fn send_message(
         .await
         .map_err(|e| e.to_string())?;
     Ok(session.local_id.clone())
+}
+
+/// Shared helper: cancel any in-flight turn AND drop the AgentSession so the
+/// next send rebuilds it (picking up a fresh cwd from the new active
+/// workspace). Used by set_active_workspace and delete_workspace.
+async fn end_current_session(state: &Arc<AppState>) {
+    let mut guard = state.session.lock().await;
+    if let Some(s) = guard.take() {
+        let _ = s.end().await;
+    }
 }
 
 #[tauri::command]
@@ -120,9 +146,50 @@ async fn delete_workspace(
     app: AppHandle,
     state: State<'_, Arc<AppState>>,
     id: String,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     let storage = storage_for(&app, &state).await?;
+    // If the workspace being deleted is active, end the current session up
+    // front so its child process isn't left holding a working-dir we're
+    // about to remove.
+    let active = tokio::task::spawn_blocking({
+        let storage = storage.clone();
+        move || storage.get_active_workspace()
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    if active.as_ref().map(|w| w.id.as_str()) == Some(id.as_str()) {
+        end_current_session(&state).await;
+    }
     tokio::task::spawn_blocking(move || storage.delete_workspace(&id))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn set_active_workspace(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    id: String,
+) -> Result<Workspace, String> {
+    // Switching workspaces ends the in-flight turn (and the whole session)
+    // so the next send_message spawns claude with the new working directory.
+    end_current_session(&state).await;
+    let storage = storage_for(&app, &state).await?;
+    tokio::task::spawn_blocking(move || storage.set_active_workspace(&id))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_active_workspace(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<Option<Workspace>, String> {
+    let storage = storage_for(&app, &state).await?;
+    tokio::task::spawn_blocking(move || storage.get_active_workspace())
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())
@@ -164,6 +231,8 @@ pub fn run() {
             create_workspace,
             rename_workspace,
             delete_workspace,
+            set_active_workspace,
+            get_active_workspace,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

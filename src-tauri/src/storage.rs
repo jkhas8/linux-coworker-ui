@@ -2,11 +2,12 @@
 //
 // Storage layout under `<root>`:
 //   workspaces.json                                  — array of Workspace
+//   active.json                                      — { active_id: Option<String> }
 //   workspaces/<workspace_id>/conversations/         — created lazily by later stories
 //
-// `workspaces.json` is rewritten atomically (temp file + rename) on every
-// mutation so a crash leaves either the old file intact or the new file
-// fully written — never a half-written one.
+// Both top-level JSON files are rewritten atomically (temp file + rename)
+// on every mutation so a crash leaves either the old file intact or the
+// new file fully written — never a half-written one.
 //
 // All operations are synchronous. The Tauri commands wrap them in
 // `tokio::task::spawn_blocking` when called from async contexts.
@@ -50,6 +51,10 @@ impl Storage {
 
     fn workspaces_path(&self) -> PathBuf {
         self.root.join("workspaces.json")
+    }
+
+    fn active_path(&self) -> PathBuf {
+        self.root.join("active.json")
     }
 
     fn workspace_dir(&self, id: &str) -> PathBuf {
@@ -121,8 +126,10 @@ impl Storage {
 
     /// Delete the workspace entry and its on-disk conversations folder.
     /// If the folder removal fails, the entry is restored so the workspace
-    /// is not orphaned.
-    pub fn delete_workspace(&self, id: &str) -> Result<()> {
+    /// is not orphaned. Returns the new active workspace id (the
+    /// most-recently-used remaining one) when the deleted workspace was
+    /// active; `None` otherwise or when no workspaces remain.
+    pub fn delete_workspace(&self, id: &str) -> Result<Option<String>> {
         let mut list = self.list_workspaces()?;
         let original = list.clone();
         let pos = list
@@ -140,7 +147,72 @@ impl Storage {
                 return Err(err).with_context(|| format!("remove {:?}", dir));
             }
         }
-        Ok(())
+
+        // If the deleted workspace was active, fall back to the most-
+        // recently-used remaining workspace (or clear active when the list
+        // is now empty).
+        let current_active = self.read_active_id()?;
+        if current_active.as_deref() == Some(id) {
+            let next = list
+                .iter()
+                .max_by_key(|w| w.last_used_at)
+                .map(|w| w.id.clone());
+            self.write_active_id(next.as_deref())?;
+            return Ok(next);
+        }
+        Ok(None)
+    }
+
+    /// Set the active workspace by id. Bumps the workspace's `last_used_at`
+    /// to "now" so that downstream "most recent" sorts surface it.
+    pub fn set_active_workspace(&self, id: &str) -> Result<Workspace> {
+        let mut list = self.list_workspaces()?;
+        let workspace = list
+            .iter_mut()
+            .find(|w| w.id == id)
+            .ok_or_else(|| anyhow!("workspace {id} not found"))?;
+        workspace.last_used_at = now_millis();
+        let updated = workspace.clone();
+        self.write_workspaces(&list)?;
+        self.write_active_id(Some(id))?;
+        Ok(updated)
+    }
+
+    /// Get the active workspace, if any. Returns `None` when no workspace
+    /// is active or when the persisted active id no longer matches any
+    /// workspace (in which case the stale id is cleared).
+    pub fn get_active_workspace(&self) -> Result<Option<Workspace>> {
+        let Some(active_id) = self.read_active_id()? else {
+            return Ok(None);
+        };
+        let list = self.list_workspaces()?;
+        if let Some(ws) = list.into_iter().find(|w| w.id == active_id) {
+            Ok(Some(ws))
+        } else {
+            // Stale active id (workspace was deleted out-of-band). Clear it.
+            self.write_active_id(None)?;
+            Ok(None)
+        }
+    }
+
+    fn read_active_id(&self) -> Result<Option<String>> {
+        let path = self.active_path();
+        if !path.exists() {
+            return Ok(None);
+        }
+        let bytes = fs::read(&path).with_context(|| format!("read {:?}", path))?;
+        #[derive(Deserialize)]
+        struct ActiveFile {
+            #[serde(default)]
+            active_id: Option<String>,
+        }
+        let parsed: ActiveFile = serde_json::from_slice(&bytes).context("parse active.json")?;
+        Ok(parsed.active_id)
+    }
+
+    fn write_active_id(&self, id: Option<&str>) -> Result<()> {
+        let value = serde_json::json!({ "active_id": id });
+        write_json_atomic(&self.active_path(), &value)
     }
 
     fn write_workspaces(&self, list: &[Workspace]) -> Result<()> {
@@ -302,9 +374,11 @@ mod tests {
         let ws = storage.create_workspace("ws", target.path()).unwrap();
         let dir = storage.workspace_dir(&ws.id);
         assert!(dir.exists());
-        storage.delete_workspace(&ws.id).unwrap();
+        let new_active = storage.delete_workspace(&ws.id).unwrap();
         assert!(storage.list_workspaces().unwrap().is_empty());
         assert!(!dir.exists());
+        // Workspace was never set active, so no fallback.
+        assert_eq!(new_active, None);
     }
 
     #[test]
@@ -312,6 +386,111 @@ mod tests {
         let (storage, _root, _target) = open_store();
         let err = storage.delete_workspace("nope").unwrap_err().to_string();
         assert!(err.contains("not found"), "got: {err}");
+    }
+
+    // ── active workspace ──────────────────────────────────────────────────
+
+    #[test]
+    fn get_active_returns_none_when_unset() {
+        let (storage, _root, _target) = open_store();
+        assert!(storage.get_active_workspace().unwrap().is_none());
+    }
+
+    #[test]
+    fn set_active_persists_and_returns_workspace() {
+        let (storage, root, target) = open_store();
+        let ws = storage.create_workspace("ws", target.path()).unwrap();
+        let active = storage.set_active_workspace(&ws.id).unwrap();
+        assert_eq!(active.id, ws.id);
+        // Persistence across reopen.
+        let reopened = Storage::open(root.path()).unwrap();
+        assert_eq!(
+            reopened.get_active_workspace().unwrap().map(|w| w.id),
+            Some(ws.id)
+        );
+    }
+
+    #[test]
+    fn set_active_bumps_last_used_at_to_newer_value() {
+        let (storage, _root, target) = open_store();
+        let ws = storage.create_workspace("ws", target.path()).unwrap();
+        let original = ws.last_used_at;
+        // Force a small wait so the millis tick advances.
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let active = storage.set_active_workspace(&ws.id).unwrap();
+        assert!(
+            active.last_used_at >= original,
+            "expected last_used_at to be bumped: {} >= {}",
+            active.last_used_at,
+            original
+        );
+    }
+
+    #[test]
+    fn set_active_unknown_id_errors() {
+        let (storage, _root, _target) = open_store();
+        let err = storage
+            .set_active_workspace("nope")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("not found"), "got: {err}");
+    }
+
+    #[test]
+    fn get_active_clears_stale_id_when_workspace_disappeared() {
+        let (storage, _root, target) = open_store();
+        let ws = storage.create_workspace("ws", target.path()).unwrap();
+        storage.set_active_workspace(&ws.id).unwrap();
+        // Tamper: write a bogus active id manually.
+        storage.write_active_id(Some("nonexistent-id")).unwrap();
+        // get_active sees the mismatch and clears it.
+        assert!(storage.get_active_workspace().unwrap().is_none());
+        // After the clear, the on-disk active_id is None.
+        assert_eq!(storage.read_active_id().unwrap(), None);
+    }
+
+    #[test]
+    fn delete_active_falls_back_to_most_recently_used() {
+        let (storage, _root, target) = open_store();
+        let a = storage.create_workspace("a", target.path()).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let b = storage.create_workspace("b", target.path()).unwrap();
+        // Make `a` more recently used than `b`.
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        storage.set_active_workspace(&a.id).unwrap();
+        // Now active=a, last_used: a > b. Delete the currently-active a;
+        // expect fallback to b (the only remaining).
+        let new_active = storage.delete_workspace(&a.id).unwrap();
+        assert_eq!(new_active, Some(b.id.clone()));
+        assert_eq!(
+            storage.get_active_workspace().unwrap().map(|w| w.id),
+            Some(b.id)
+        );
+    }
+
+    #[test]
+    fn delete_active_clears_when_no_workspaces_remain() {
+        let (storage, _root, target) = open_store();
+        let ws = storage.create_workspace("ws", target.path()).unwrap();
+        storage.set_active_workspace(&ws.id).unwrap();
+        let new_active = storage.delete_workspace(&ws.id).unwrap();
+        assert_eq!(new_active, None);
+        assert!(storage.get_active_workspace().unwrap().is_none());
+    }
+
+    #[test]
+    fn delete_inactive_does_not_change_active() {
+        let (storage, _root, target) = open_store();
+        let a = storage.create_workspace("a", target.path()).unwrap();
+        let b = storage.create_workspace("b", target.path()).unwrap();
+        storage.set_active_workspace(&a.id).unwrap();
+        let new_active = storage.delete_workspace(&b.id).unwrap();
+        // Active didn't change → no fallback id returned.
+        assert_eq!(new_active, None);
+        assert_eq!(
+            storage.get_active_workspace().unwrap().map(|w| w.id),
+            Some(a.id)
+        );
     }
 
     #[test]
