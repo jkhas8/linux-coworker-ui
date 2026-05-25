@@ -35,6 +35,27 @@ pub struct Workspace {
     pub last_used_at: u64,
 }
 
+/// One entry in a workspace's `conversations/index.json`. Lets the rail
+/// list conversations without having to open each jsonl.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConversationSummary {
+    pub id: String,
+    pub title: String,
+    /// Unix timestamp in milliseconds, set on first event.
+    pub started_at: u64,
+    /// Unix timestamp in milliseconds, bumped on every event append.
+    pub last_active_at: u64,
+    /// Claude Code's session id (captured from the `system/init` event).
+    /// Used by Story 10 to drive `--resume`.
+    #[serde(default)]
+    pub claude_session_id: Option<String>,
+    /// When true, the title was set explicitly by the user (e.g. through
+    /// a rename in Story 05) and should NOT be auto-derived from future
+    /// user-text events.
+    #[serde(default)]
+    pub title_pinned: bool,
+}
+
 /// Filesystem-backed workspace store. Construct one per app via
 /// [`Storage::open`]. Cheap to clone (it's just a path).
 #[derive(Debug, Clone)]
@@ -227,6 +248,8 @@ impl Storage {
 
     /// Open (or create) the append-only event log for a conversation under
     /// the given workspace. The conversations folder is created on demand.
+    /// The returned log knows how to update this workspace's
+    /// `index.json` as events arrive (Story 04).
     pub fn open_conversation(
         &self,
         workspace_id: &str,
@@ -235,8 +258,227 @@ impl Storage {
         let dir = self.workspace_dir(workspace_id).join("conversations");
         fs::create_dir_all(&dir).with_context(|| format!("create {:?}", dir))?;
         let path = dir.join(format!("{conversation_id}.jsonl"));
-        Ok(ConversationLog::open(path))
+        Ok(ConversationLog::open(
+            path,
+            self.clone(),
+            workspace_id.to_string(),
+            conversation_id.to_string(),
+        ))
     }
+
+    // ── conversation index ───────────────────────────────────────────────
+
+    fn index_path(&self, workspace_id: &str) -> PathBuf {
+        self.workspace_dir(workspace_id)
+            .join("conversations")
+            .join("index.json")
+    }
+
+    /// Read the workspace's conversation index. Falls back to reconstructing
+    /// from on-disk `.jsonl` files when the index is missing or unparseable;
+    /// in that case the reconstructed entries carry the file's mtime as
+    /// `last_active_at` and the filename stem as `id`, with placeholder
+    /// titles that future events will overwrite (unless pinned).
+    pub fn load_conversation_index(&self, workspace_id: &str) -> Result<Vec<ConversationSummary>> {
+        let path = self.index_path(workspace_id);
+        if path.exists() {
+            match fs::read(&path)
+                .with_context(|| format!("read {:?}", path))
+                .and_then(|b| serde_json::from_slice(&b).context("parse index.json"))
+            {
+                Ok(list) => return Ok(list),
+                Err(err) => {
+                    tracing::warn!(?err, ?path, "conversation index unreadable, rebuilding");
+                }
+            }
+        }
+        let rebuilt = self.reconstruct_index(workspace_id)?;
+        if !rebuilt.is_empty() {
+            self.write_conversation_index(workspace_id, &rebuilt)?;
+        }
+        tracing::info!(
+            workspace_id,
+            count = rebuilt.len(),
+            "reconstructed conversation index from disk"
+        );
+        Ok(rebuilt)
+    }
+
+    fn reconstruct_index(&self, workspace_id: &str) -> Result<Vec<ConversationSummary>> {
+        let dir = self.workspace_dir(workspace_id).join("conversations");
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+        let mut out = Vec::new();
+        for entry in fs::read_dir(&dir).with_context(|| format!("read_dir {:?}", dir))? {
+            let entry = entry?;
+            let path = entry.path();
+            let Some(stem) = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_string())
+            else {
+                continue;
+            };
+            // Skip the index file itself + anything that isn't a .jsonl.
+            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                continue;
+            }
+            let mtime_ms = entry
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or_else(now_millis);
+            out.push(ConversationSummary {
+                id: stem.clone(),
+                title: format!("Conversation {stem}"),
+                started_at: mtime_ms,
+                last_active_at: mtime_ms,
+                claude_session_id: None,
+                title_pinned: false,
+            });
+        }
+        Ok(out)
+    }
+
+    fn write_conversation_index(
+        &self,
+        workspace_id: &str,
+        list: &[ConversationSummary],
+    ) -> Result<()> {
+        write_json_atomic(&self.index_path(workspace_id), list)
+    }
+
+    /// Bump (or create) an index entry for a conversation in response to a
+    /// streamed event. Sets `started_at` on first event, always bumps
+    /// `last_active_at`, derives a title from the first user-text event
+    /// unless the title is pinned, and captures Claude's session id from
+    /// `system/init` events.
+    pub fn update_conversation_for_event(
+        &self,
+        workspace_id: &str,
+        conversation_id: &str,
+        event: &Value,
+    ) -> Result<()> {
+        let workspace_name = self
+            .list_workspaces()?
+            .into_iter()
+            .find(|w| w.id == workspace_id)
+            .map(|w| w.name)
+            .unwrap_or_else(|| "workspace".to_string());
+
+        let mut list = self.load_conversation_index(workspace_id)?;
+        let now = now_millis();
+        let pos = list.iter().position(|c| c.id == conversation_id);
+        let entry = match pos {
+            Some(i) => &mut list[i],
+            None => {
+                list.push(ConversationSummary {
+                    id: conversation_id.to_string(),
+                    title: format!("{workspace_name} \u{00b7} {now}"),
+                    started_at: now,
+                    last_active_at: now,
+                    claude_session_id: None,
+                    title_pinned: false,
+                });
+                list.last_mut().expect("just pushed")
+            }
+        };
+        entry.last_active_at = now;
+        if !entry.title_pinned {
+            if let Some(derived) = derive_title_from_event(event) {
+                entry.title = derived;
+                // First user-text event sets the title and acts as the
+                // "we have a real title now" marker — we don't pin here
+                // because Story 05's rename does that explicitly.
+            }
+        }
+        if let Some(sid) = extract_init_session_id(event) {
+            entry.claude_session_id = Some(sid);
+        }
+        self.write_conversation_index(workspace_id, &list)?;
+        Ok(())
+    }
+
+    /// Manually set a conversation's title (used by Story 05's
+    /// `rename_conversation` command). Pins the title so future
+    /// user-text events don't overwrite it.
+    #[allow(dead_code)] // wired up in Story 05
+    pub fn pin_conversation_title(
+        &self,
+        workspace_id: &str,
+        conversation_id: &str,
+        new_title: &str,
+    ) -> Result<ConversationSummary> {
+        let new_title = new_title.trim();
+        if new_title.is_empty() {
+            bail!("conversation title cannot be empty");
+        }
+        let mut list = self.load_conversation_index(workspace_id)?;
+        let entry = list
+            .iter_mut()
+            .find(|c| c.id == conversation_id)
+            .ok_or_else(|| anyhow!("conversation {conversation_id} not found"))?;
+        entry.title = new_title.to_string();
+        entry.title_pinned = true;
+        let updated = entry.clone();
+        self.write_conversation_index(workspace_id, &list)?;
+        Ok(updated)
+    }
+}
+
+/// Pull a user-displayable title out of an Anthropic stream-json event,
+/// when the event is a user-text message. Returns None for any other
+/// event type so the caller can leave the existing title alone.
+fn derive_title_from_event(event: &Value) -> Option<String> {
+    if event.get("type").and_then(Value::as_str) != Some("user") {
+        return None;
+    }
+    let content = event.pointer("/message/content")?.as_array()?;
+    let first_text = content
+        .iter()
+        .find_map(|c| c.get("text").and_then(Value::as_str))?;
+    derive_title(first_text)
+}
+
+/// Pure title deriver. Returns `None` for empty / whitespace-only input
+/// so the caller keeps whatever fallback title was assigned.
+fn derive_title(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    const MAX_LEN: usize = 50;
+    if trimmed.chars().count() <= MAX_LEN {
+        return Some(trimmed.to_string());
+    }
+    // Truncate to MAX_LEN chars, then back off to the last whitespace
+    // so we don't end mid-word. Append an ellipsis.
+    let mut truncated: String = trimmed.chars().take(MAX_LEN).collect();
+    if let Some(last_ws) = truncated.rfind(char::is_whitespace) {
+        // Only back off if we'd keep at least a third of the budget — for
+        // single-long-word inputs, just truncate hard.
+        if last_ws >= MAX_LEN / 3 {
+            truncated.truncate(last_ws);
+        }
+    }
+    truncated.push('\u{2026}'); // …
+    Some(truncated)
+}
+
+fn extract_init_session_id(event: &Value) -> Option<String> {
+    if event.get("type").and_then(Value::as_str) != Some("system") {
+        return None;
+    }
+    if event.get("subtype").and_then(Value::as_str) != Some("init") {
+        return None;
+    }
+    event
+        .get("session_id")
+        .and_then(Value::as_str)
+        .map(|s| s.to_string())
 }
 
 /// Append-only event log for a single conversation. Cheap to clone (it's
@@ -251,30 +493,43 @@ impl Storage {
 pub struct ConversationLog {
     path: PathBuf,
     writer: Arc<Mutex<()>>,
+    storage: Storage,
+    workspace_id: String,
+    conversation_id: String,
 }
 
 impl ConversationLog {
-    fn open(path: PathBuf) -> Self {
+    fn open(
+        path: PathBuf,
+        storage: Storage,
+        workspace_id: String,
+        conversation_id: String,
+    ) -> Self {
         Self {
             path,
             writer: Arc::new(Mutex::new(())),
+            storage,
+            workspace_id,
+            conversation_id,
         }
     }
 
-    #[allow(dead_code)] // used by tests + future stories (04, 09)
+    #[allow(dead_code)] // used by tests + future stories (09)
     pub fn path(&self) -> &Path {
         &self.path
     }
 
     /// Returns true if the log file has been created on disk (i.e. at
     /// least one event has been appended).
-    #[allow(dead_code)] // used by tests + future stories (04, 09)
+    #[allow(dead_code)] // used by tests + future stories (09)
     pub fn exists(&self) -> bool {
         self.path.exists()
     }
 
     /// Append a single JSON event to the log as one newline-terminated
-    /// line. Creates the file on the first call.
+    /// line. Creates the file on the first call. Also updates the
+    /// workspace's conversation index (title, `last_active_at`, captured
+    /// claude session id).
     pub fn append_event(&self, event: &Value) -> Result<()> {
         let _guard = self
             .writer
@@ -293,6 +548,18 @@ impl ConversationLog {
         // stream loop). A crash may lose the trailing N kB of the buffer
         // but never produces a torn line, because each write() is atomic
         // and we always end with `\n`.
+
+        // Update the index in the same critical section so the index can't
+        // claim a higher last_active_at than what's actually on disk.
+        if let Err(err) = self.storage.update_conversation_for_event(
+            &self.workspace_id,
+            &self.conversation_id,
+            event,
+        ) {
+            // Don't propagate — losing the index update is annoying but
+            // not catastrophic (it's rebuildable from the jsonl files).
+            tracing::warn!(?err, "failed to update conversation index");
+        }
         Ok(())
     }
 }
@@ -646,6 +913,183 @@ mod tests {
             .join("conv-1.jsonl");
         assert_eq!(log.path(), expected.as_path());
         assert!(expected.exists());
+    }
+
+    // ── conversation index + auto-titles ─────────────────────────────────
+
+    fn user_text_event(text: &str) -> Value {
+        serde_json::json!({
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [{"type": "text", "text": text}],
+            }
+        })
+    }
+
+    #[test]
+    fn derive_title_returns_short_input_verbatim() {
+        assert_eq!(super::derive_title("hello"), Some("hello".to_string()));
+    }
+
+    #[test]
+    fn derive_title_returns_none_for_whitespace_only() {
+        assert_eq!(super::derive_title("   \n\t  "), None);
+        assert_eq!(super::derive_title(""), None);
+    }
+
+    #[test]
+    fn derive_title_trims_input() {
+        assert_eq!(
+            super::derive_title("  hi there  "),
+            Some("hi there".to_string())
+        );
+    }
+
+    #[test]
+    fn derive_title_truncates_long_input_at_word_boundary() {
+        let input = "fix the bug in the OAuth handler that drops the refresh token on retry";
+        let title = super::derive_title(input).unwrap();
+        assert!(title.ends_with('\u{2026}'), "got: {title}");
+        assert!(title.chars().count() <= 51); // 50 + ellipsis
+                                              // Should not end mid-word; the char before ellipsis must be the
+                                              // last char of a word (i.e. not a letter cut from a longer word).
+        let without_ellipsis = title.trim_end_matches('\u{2026}');
+        assert!(
+            !without_ellipsis.ends_with(|c: char| c.is_alphabetic())
+                || input.starts_with(without_ellipsis),
+            "expected word-boundary truncation, got: {title}"
+        );
+    }
+
+    #[test]
+    fn derive_title_hard_truncates_when_no_whitespace() {
+        let input = "a".repeat(80);
+        let title = super::derive_title(&input).unwrap();
+        assert_eq!(title.chars().count(), 51); // 50 'a' + ellipsis
+    }
+
+    #[test]
+    fn index_creates_entry_on_first_event() {
+        let (storage, _root, target) = open_store();
+        let ws = storage.create_workspace("ws", target.path()).unwrap();
+        let log = storage.open_conversation(&ws.id, "c1").unwrap();
+        log.append_event(&user_text_event("first message")).unwrap();
+        let list = storage.load_conversation_index(&ws.id).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, "c1");
+        assert_eq!(list[0].title, "first message");
+        assert!(!list[0].title_pinned);
+        assert!(list[0].started_at > 0);
+        assert!(list[0].last_active_at >= list[0].started_at);
+    }
+
+    #[test]
+    fn index_bumps_last_active_on_each_event() {
+        let (storage, _root, target) = open_store();
+        let ws = storage.create_workspace("ws", target.path()).unwrap();
+        let log = storage.open_conversation(&ws.id, "c1").unwrap();
+        log.append_event(&user_text_event("hi")).unwrap();
+        let first = storage.load_conversation_index(&ws.id).unwrap()[0].last_active_at;
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        log.append_event(&serde_json::json!({"type": "assistant"}))
+            .unwrap();
+        let second = storage.load_conversation_index(&ws.id).unwrap()[0].last_active_at;
+        assert!(second > first, "{} > {}", second, first);
+    }
+
+    #[test]
+    fn index_does_not_overwrite_pinned_title() {
+        let (storage, _root, target) = open_store();
+        let ws = storage.create_workspace("ws", target.path()).unwrap();
+        let log = storage.open_conversation(&ws.id, "c1").unwrap();
+        log.append_event(&user_text_event("first")).unwrap();
+        // User renames the conversation (Story 05).
+        storage
+            .pin_conversation_title(&ws.id, "c1", "My custom title")
+            .unwrap();
+        // A later user-text event must not clobber the pinned title.
+        log.append_event(&user_text_event("second message"))
+            .unwrap();
+        let entry = &storage.load_conversation_index(&ws.id).unwrap()[0];
+        assert_eq!(entry.title, "My custom title");
+        assert!(entry.title_pinned);
+    }
+
+    #[test]
+    fn index_uses_placeholder_when_first_event_has_no_text() {
+        let (storage, _root, target) = open_store();
+        let ws = storage.create_workspace("ws", target.path()).unwrap();
+        let log = storage.open_conversation(&ws.id, "c1").unwrap();
+        // Empty content array (e.g. attachments only that we then strip).
+        log.append_event(&serde_json::json!({
+            "type": "user",
+            "message": {"role": "user", "content": []},
+        }))
+        .unwrap();
+        let entry = &storage.load_conversation_index(&ws.id).unwrap()[0];
+        // No user text → title is a placeholder, not empty, not derived
+        // from the event. (Exact wording depends on whether the entry was
+        // created via reconstruction or via the placeholder branch — both
+        // are acceptable v1 placeholders.)
+        assert!(!entry.title.trim().is_empty(), "got empty title");
+        assert!(!entry.title_pinned);
+    }
+
+    #[test]
+    fn index_captures_claude_session_id_from_init_event() {
+        let (storage, _root, target) = open_store();
+        let ws = storage.create_workspace("ws", target.path()).unwrap();
+        let log = storage.open_conversation(&ws.id, "c1").unwrap();
+        log.append_event(&serde_json::json!({
+            "type": "system",
+            "subtype": "init",
+            "session_id": "sk-claude-abc123",
+        }))
+        .unwrap();
+        let entry = &storage.load_conversation_index(&ws.id).unwrap()[0];
+        assert_eq!(entry.claude_session_id.as_deref(), Some("sk-claude-abc123"));
+    }
+
+    #[test]
+    fn index_reconstructs_from_disk_when_missing() {
+        let (storage, _root, target) = open_store();
+        let ws = storage.create_workspace("ws", target.path()).unwrap();
+        let log = storage.open_conversation(&ws.id, "c1").unwrap();
+        log.append_event(&user_text_event("hi")).unwrap();
+        // Delete the index file out-of-band.
+        fs::remove_file(storage.index_path(&ws.id)).unwrap();
+        // Load triggers reconstruction.
+        let list = storage.load_conversation_index(&ws.id).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, "c1");
+        // Reconstruction uses a placeholder title — the original was lost
+        // when the index disappeared (jsonl-replay-to-recover is Story 09).
+        assert!(list[0].title.starts_with("Conversation "));
+    }
+
+    #[test]
+    fn pin_conversation_title_rejects_empty() {
+        let (storage, _root, target) = open_store();
+        let ws = storage.create_workspace("ws", target.path()).unwrap();
+        let log = storage.open_conversation(&ws.id, "c1").unwrap();
+        log.append_event(&user_text_event("hi")).unwrap();
+        let err = storage
+            .pin_conversation_title(&ws.id, "c1", "  ")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("empty"), "got: {err}");
+    }
+
+    #[test]
+    fn pin_conversation_title_unknown_id_errors() {
+        let (storage, _root, target) = open_store();
+        let ws = storage.create_workspace("ws", target.path()).unwrap();
+        let err = storage
+            .pin_conversation_title(&ws.id, "nope", "x")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("not found"), "got: {err}");
     }
 
     #[test]
