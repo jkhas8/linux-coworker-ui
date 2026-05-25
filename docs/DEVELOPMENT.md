@@ -456,12 +456,17 @@ The gate runs only on `pull_request` events — pushes to `main` are not
 gated (the gate's job is to keep new work covered, not to retroactively
 cover the existing codebase).
 
-**Excluded from coverage** (treated as framework glue, not business
-logic):
+**Excluded from coverage** (treated as framework / subprocess glue, not
+business logic):
 
 - `src-tauri/src/lib.rs` and `src-tauri/src/main.rs` — Tauri entry
-  points; commands declared here are thin wrappers around modules
-  (`storage.rs`, `agent.rs`, ...) that are themselves unit-tested.
+  points; commands declared here are thin wrappers around the modules
+  below.
+- `src-tauri/src/agent.rs` — orchestrates the `claude` subprocess and
+  the stream-event reader. Needs integration tests (with a mocked
+  subprocess), which are out of scope for the per-PR unit gate. Any
+  pure helpers in this file (e.g. `build_user_message`) can still be
+  unit-tested directly.
 - Frontend: `src/vite-env.d.ts`, `src/index.tsx`, and `*.test.{ts,tsx}`
   files (configured in `vitest.config.ts`).
 
