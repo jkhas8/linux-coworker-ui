@@ -1,4 +1,4 @@
-import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { eventToBlocks } from "./stream";
@@ -15,6 +15,7 @@ import { AnswerSection } from "./components/AnswerSection";
 import { AskQuestionForm } from "./components/AskQuestion";
 import { AttachmentStrip } from "./components/Attachments";
 import { FilePreview } from "./components/FilePreview";
+import { ConfirmSwitchModal } from "./components/ConfirmSwitchModal";
 import { ConversationRail } from "./components/ConversationRail";
 import { FirstLaunch } from "./components/FirstLaunch";
 import { WorkspacePicker } from "./components/WorkspacePicker";
@@ -53,6 +54,11 @@ function App() {
   const [activeConversationId, setActiveConversationId] = createSignal<
     string | null
   >(null);
+  // Pending workspace switch awaiting user confirmation (Story 08).
+  // Carries the target workspace id; the modal is shown while non-null.
+  const [pendingSwitch, setPendingSwitch] = createSignal<Workspace | null>(
+    null,
+  );
   // Last user payload, kept so the Retry button can re-send after a stop.
   let lastPayload: { text: string; attachments: Attachment[] } | null = null;
 
@@ -140,7 +146,7 @@ function App() {
     return ws;
   }
 
-  async function onSwitchWorkspace(id: string) {
+  async function performSwitchWorkspace(id: string) {
     try {
       await setActiveWorkspace(id);
       // Switching ends the current conversation (matches "+ New").
@@ -154,6 +160,27 @@ function App() {
       setBlocks((prev) => [...prev, { kind: "error", text: String(err) }]);
     }
   }
+
+  async function onSwitchWorkspace(id: string) {
+    if (busy()) {
+      // Defer behind a confirmation; the modal calls performSwitchWorkspace.
+      const target = workspaces().find((w) => w.id === id);
+      if (target) setPendingSwitch(target);
+      return;
+    }
+    await performSwitchWorkspace(id);
+  }
+
+  // Auto-dismiss the switch-confirmation modal when the in-flight turn
+  // ends on its own (no point asking the user about something that no
+  // longer needs cancelling). Run the switch directly in that case.
+  createEffect(() => {
+    const target = pendingSwitch();
+    if (target && !busy()) {
+      setPendingSwitch(null);
+      void performSwitchWorkspace(target.id);
+    }
+  });
 
   onMount(async () => {
     await refreshWorkspaces();
@@ -523,6 +550,17 @@ function App() {
         />
       </Show>
       </div>
+      <Show when={pendingSwitch()}>
+        <ConfirmSwitchModal
+          targetName={pendingSwitch()!.name}
+          onCancel={() => setPendingSwitch(null)}
+          onConfirm={() => {
+            const target = pendingSwitch()!;
+            setPendingSwitch(null);
+            void performSwitchWorkspace(target.id);
+          }}
+        />
+      </Show>
     </main>
   );
 }

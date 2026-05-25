@@ -302,6 +302,69 @@ body,
   background: rgba(217, 83, 79, 0.12);
 }
 
+/* ── confirm-switch modal ─────────────────────────────────────────────── */
+
+.confirm-switch-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(7, 9, 14, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 24px;
+}
+.confirm-switch-dialog {
+  max-width: 420px;
+  width: 100%;
+  background: #181a20;
+  border: 1px solid #2a2d33;
+  border-radius: 10px;
+  padding: 22px 24px 18px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+}
+.confirm-switch-dialog h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+  color: #f5f6f8;
+}
+.confirm-switch-dialog p {
+  margin: 0 0 18px;
+  color: #b5b9c2;
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+.confirm-switch-dialog strong {
+  color: #8fb4ff;
+}
+.confirm-switch-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.confirm-switch-cancel {
+  background: transparent;
+  border: 1px solid #2a2d33;
+  color: #b5b9c2;
+  border-radius: 6px;
+  padding: 7px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.confirm-switch-confirm {
+  background: #d9534f;
+  color: #f6f6f6;
+  border: 0;
+  border-radius: 6px;
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.confirm-switch-confirm:hover {
+  background: #e2625e;
+}
+
 /* ── first-launch empty state ─────────────────────────────────────────── */
 
 .first-launch {
