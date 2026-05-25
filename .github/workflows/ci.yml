@@ -129,16 +129,19 @@ jobs:
           BASE_SHA=$(git merge-base origin/${{ github.base_ref }} HEAD)
           echo "base=$BASE_SHA" >> "$GITHUB_OUTPUT"
 
+      # diff-cover only gates lines that are BOTH in the PR diff AND in the
+      # lcov report. Test files, type-decl files, and src/index.tsx are
+      # excluded from the lcov reports (via vitest config + cargo defaults),
+      # so they're automatically out of scope here — no extra --include needed.
+
       - name: Rust diff-cover gate (>=90%)
         run: |
           diff-cover coverage/rust.lcov.info \
             --compare-branch=${{ steps.base.outputs.base }} \
-            --fail-under=90 \
-            --include="src-tauri/src/**/*.rs" "crates/**/src/**/*.rs"
+            --fail-under=90
 
       - name: Frontend diff-cover gate (>=90%)
         run: |
           diff-cover coverage/frontend/lcov.info \
             --compare-branch=${{ steps.base.outputs.base }} \
-            --fail-under=90 \
-            --include="src/**/*.ts" "src/**/*.tsx"
+            --fail-under=90
