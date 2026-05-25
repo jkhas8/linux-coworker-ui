@@ -16,6 +16,13 @@ export default defineConfig({
         "src/**/*.test.{ts,tsx}",
         "src/vite-env.d.ts",
         "src/index.tsx",
+        // App shell: layout + Tauri-event wiring + signal orchestration.
+        // Same category as src-tauri/src/lib.rs — needs an integration
+        // harness, not unit tests. Components rendered by App are tested
+        // individually under src/components/.
+        "src/App.tsx",
+        // Pure `invoke<T>()` wrappers — testing them = testing Tauri.
+        "src/workspaces.ts",
       ],
     },
   },

@@ -2,18 +2,31 @@ import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { eventToBlocks } from "./stream";
-import type { AgentEvent, Attachment, DisplayBlock } from "./types";
+import type {
+  AgentEvent,
+  Attachment,
+  DisplayBlock,
+  Workspace,
+} from "./types";
 import { ToolCallCard, ToolResultCard } from "./components/ToolCall";
 import { ThinkingBlock } from "./components/Thinking";
 import { AnswerSection } from "./components/AnswerSection";
 import { AskQuestionForm } from "./components/AskQuestion";
 import { AttachmentStrip } from "./components/Attachments";
 import { FilePreview } from "./components/FilePreview";
+import { FirstLaunch } from "./components/FirstLaunch";
+import { WorkspacePicker } from "./components/WorkspacePicker";
 import {
   fileToAttachment,
   filesFromDataTransfer,
   imagesFromDataTransfer,
 } from "./attachments";
+import {
+  createWorkspace,
+  getActiveWorkspace,
+  listWorkspaces,
+  setActiveWorkspace,
+} from "./workspaces";
 import "./App.css";
 
 function App() {
@@ -25,6 +38,9 @@ function App() {
   const [previewPath, setPreviewPath] = createSignal<string | null>(null);
   // Bump to force the FilePreview to refetch from disk (e.g. after another Edit).
   const [previewRefresh, setPreviewRefresh] = createSignal(0);
+  // Workspace state (Story 06).
+  const [workspaces, setWorkspaces] = createSignal<Workspace[]>([]);
+  const [activeWorkspace, setActiveWs] = createSignal<Workspace | null>(null);
   // Last user payload, kept so the Retry button can re-send after a stop.
   let lastPayload: { text: string; attachments: Attachment[] } | null = null;
 
@@ -40,7 +56,43 @@ function App() {
   let logEl: HTMLDivElement | undefined;
   let fileInputEl: HTMLInputElement | undefined;
 
+  async function refreshWorkspaces() {
+    try {
+      const [ws, active] = await Promise.all([
+        listWorkspaces(),
+        getActiveWorkspace(),
+      ]);
+      setWorkspaces(ws);
+      setActiveWs(active);
+    } catch (err) {
+      setBlocks((prev) => [...prev, { kind: "error", text: String(err) }]);
+    }
+  }
+
+  async function onCreateFirstWorkspace(name: string, path: string) {
+    const ws = await createWorkspace(name, path);
+    await setActiveWorkspace(ws.id);
+    await refreshWorkspaces();
+    return ws;
+  }
+
+  async function onSwitchWorkspace(id: string) {
+    try {
+      await setActiveWorkspace(id);
+      // Switching ends the current conversation (matches "+ New").
+      setBlocks([]);
+      setInput("");
+      setAttachments([]);
+      setBusy(false);
+      setPreviewPath(null);
+      await refreshWorkspaces();
+    } catch (err) {
+      setBlocks((prev) => [...prev, { kind: "error", text: String(err) }]);
+    }
+  }
+
   onMount(async () => {
+    await refreshWorkspaces();
     unlisten = await listen<AgentEvent>("claude://event", (e) => {
       const next = eventToBlocks(e.payload.raw);
       if (next.length === 0) return;
@@ -261,7 +313,27 @@ function App() {
     <main class="app" classList={{ "with-preview": !!previewPath() }}>
       <header class="header">
         <h1>linux coworker</h1>
-        <span class="hint">Claude Code · Linux desktop</span>
+        <Show
+          when={activeWorkspace()}
+          fallback={<span class="hint">Claude Code · Linux desktop</span>}
+        >
+          <WorkspacePicker
+            active={activeWorkspace()!}
+            workspaces={workspaces()}
+            onSwitch={onSwitchWorkspace}
+            onCreate={() => {
+              // Manage flow is still TODO; for now fall through to the
+              // same first-launch dialog rendered when there are no
+              // workspaces. Story 06 leaves a follow-up to wire a real
+              // "Manage workspaces" modal.
+              setWorkspaces([]);
+              setActiveWs(null);
+            }}
+            onManage={() => {
+              // No-op for now; future story.
+            }}
+          />
+        </Show>
         <Show when={busy()}>
           <span class="spinner" aria-label="thinking" />
         </Show>
@@ -278,6 +350,10 @@ function App() {
 
       <div class="content">
       <section class="chat-pane">
+      <Show
+        when={activeWorkspace()}
+        fallback={<FirstLaunch onCreate={onCreateFirstWorkspace} />}
+      >
       <div class="log" ref={logEl}>
         <Show when={blocks().length === 0}>
           <div class="empty">
@@ -358,6 +434,7 @@ function App() {
           </button>
         </div>
       </form>
+      </Show>
       </section>
       <Show when={previewPath()}>
         <FilePreview
