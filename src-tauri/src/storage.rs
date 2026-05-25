@@ -35,6 +35,19 @@ pub struct Workspace {
     pub last_used_at: u64,
 }
 
+/// Result of `Storage::load_conversation`: every parseable event from
+/// the jsonl, plus the 1-based line number where parsing stopped if the
+/// file had a corrupt / partial trailing line. `truncated_at_line ==
+/// None` means the file was fully read; an empty event list with
+/// `None` means the conversation has no events yet (or the jsonl doesn't
+/// exist).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LoadedConversation {
+    pub events: Vec<Value>,
+    #[serde(default)]
+    pub truncated_at_line: Option<usize>,
+}
+
 /// One entry in a workspace's `conversations/index.json`. Lets the rail
 /// list conversations without having to open each jsonl.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -400,6 +413,45 @@ impl Storage {
         }
         self.write_conversation_index(workspace_id, &list)?;
         Ok(())
+    }
+
+    /// Load every persisted event for a conversation. Returns the list of
+    /// parsed JSON events plus, if the underlying file had a partial
+    /// trailing line, the line number where parsing stopped (so the
+    /// frontend can render a banner). A missing file yields an empty
+    /// result rather than an error — the conversation might exist in the
+    /// index but have no events yet.
+    pub fn load_conversation(
+        &self,
+        workspace_id: &str,
+        conversation_id: &str,
+    ) -> Result<LoadedConversation> {
+        let path = self
+            .workspace_dir(workspace_id)
+            .join("conversations")
+            .join(format!("{conversation_id}.jsonl"));
+        if !path.exists() {
+            return Ok(LoadedConversation::default());
+        }
+        let contents = fs::read_to_string(&path).with_context(|| format!("read {:?}", path))?;
+        let mut events = Vec::new();
+        let mut truncated_at_line: Option<usize> = None;
+        for (i, line) in contents.lines().enumerate() {
+            if line.is_empty() {
+                continue;
+            }
+            match serde_json::from_str::<Value>(line) {
+                Ok(v) => events.push(v),
+                Err(_) => {
+                    truncated_at_line = Some(i + 1);
+                    break;
+                }
+            }
+        }
+        Ok(LoadedConversation {
+            events,
+            truncated_at_line,
+        })
     }
 
     /// List the conversations in a workspace, sorted by most-recently-
@@ -1168,6 +1220,53 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("not found"), "got: {err}");
+    }
+
+    // ── load_conversation ───────────────────────────────────────────────
+
+    #[test]
+    fn load_conversation_returns_empty_for_missing_file() {
+        let (storage, _root, target) = open_store();
+        let ws = storage.create_workspace("ws", target.path()).unwrap();
+        let result = storage.load_conversation(&ws.id, "never-existed").unwrap();
+        assert!(result.events.is_empty());
+        assert_eq!(result.truncated_at_line, None);
+    }
+
+    #[test]
+    fn load_conversation_returns_every_persisted_event() {
+        let (storage, _root, target) = open_store();
+        let ws = storage.create_workspace("ws", target.path()).unwrap();
+        let log = storage.open_conversation(&ws.id, "c1").unwrap();
+        log.append_event(&serde_json::json!({"type": "user", "i": 1}))
+            .unwrap();
+        log.append_event(&serde_json::json!({"type": "assistant", "i": 2}))
+            .unwrap();
+        log.append_event(&serde_json::json!({"type": "result", "i": 3}))
+            .unwrap();
+        let result = storage.load_conversation(&ws.id, "c1").unwrap();
+        assert_eq!(result.events.len(), 3);
+        assert_eq!(result.events[0]["i"], 1);
+        assert_eq!(result.events[2]["i"], 3);
+        assert_eq!(result.truncated_at_line, None);
+    }
+
+    #[test]
+    fn load_conversation_truncates_at_corrupt_line() {
+        let (storage, _root, target) = open_store();
+        let ws = storage.create_workspace("ws", target.path()).unwrap();
+        let log = storage.open_conversation(&ws.id, "c1").unwrap();
+        log.append_event(&serde_json::json!({"i": 1})).unwrap();
+        log.append_event(&serde_json::json!({"i": 2})).unwrap();
+        // Manually corrupt the file by appending a truncated line.
+        let path = log.path();
+        let mut existing = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+        std::io::Write::write_all(&mut existing, b"{\"broken\":\n").unwrap();
+        drop(existing);
+
+        let result = storage.load_conversation(&ws.id, "c1").unwrap();
+        assert_eq!(result.events.len(), 2);
+        assert_eq!(result.truncated_at_line, Some(3));
     }
 
     #[test]

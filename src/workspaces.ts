@@ -3,7 +3,11 @@
 // function mirrors a backend command in src-tauri/src/lib.rs.
 
 import { invoke } from "@tauri-apps/api/core";
-import type { ConversationSummary, Workspace } from "./types";
+import type {
+  ConversationSummary,
+  LoadedConversation,
+  Workspace,
+} from "./types";
 
 export async function listWorkspaces(): Promise<Workspace[]> {
   return invoke<Workspace[]>("list_workspaces");
@@ -41,6 +45,16 @@ export async function listConversations(
 ): Promise<ConversationSummary[]> {
   return invoke<ConversationSummary[]>("list_conversations", {
     workspaceId,
+  });
+}
+
+export async function loadConversation(
+  workspaceId: string,
+  conversationId: string,
+): Promise<LoadedConversation> {
+  return invoke<LoadedConversation>("load_conversation", {
+    workspaceId,
+    conversationId,
   });
 }
 

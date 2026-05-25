@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use agent::{AgentSession, UserAttachment};
-use storage::{ConversationSummary, Storage, Workspace};
+use storage::{ConversationSummary, LoadedConversation, Storage, Workspace};
 use tauri::{AppHandle, Manager, State};
 use tokio::sync::Mutex;
 
@@ -231,6 +231,20 @@ async fn list_conversations(
 }
 
 #[tauri::command]
+async fn load_conversation(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    workspace_id: String,
+    conversation_id: String,
+) -> Result<LoadedConversation, String> {
+    let storage = storage_for(&app, &state).await?;
+    tokio::task::spawn_blocking(move || storage.load_conversation(&workspace_id, &conversation_id))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn delete_conversation(
     app: AppHandle,
     state: State<'_, Arc<AppState>>,
@@ -302,6 +316,7 @@ pub fn run() {
             set_active_workspace,
             get_active_workspace,
             list_conversations,
+            load_conversation,
             delete_conversation,
             rename_conversation,
         ])
