@@ -53,10 +53,15 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: cargo llvm-cov (runs tests + emits lcov)
+        # Exclude Tauri entry points (lib.rs, main.rs) from coverage: those
+        # files are framework glue (Tauri command wrappers + run()), the
+        # equivalent of HTTP route handlers. The real logic lives in storage.rs,
+        # agent.rs, etc. and is unit-tested there.
         run: |
           mkdir -p coverage
           cargo llvm-cov --workspace --no-fail-fast --lcov \
-            --output-path coverage/rust.lcov.info
+            --output-path coverage/rust.lcov.info \
+            --ignore-filename-regex 'src-tauri/src/(lib|main)\.rs$'
 
       - name: Upload Rust coverage
         uses: actions/upload-artifact@v7

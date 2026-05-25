@@ -1,16 +1,31 @@
 mod agent;
 mod mcp_config;
+mod storage;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use agent::{AgentSession, UserAttachment};
-use tauri::{AppHandle, State};
+use storage::{Storage, Workspace};
+use tauri::{AppHandle, Manager, State};
 use tokio::sync::Mutex;
 
 #[derive(Default)]
 struct AppState {
     session: Mutex<Option<AgentSession>>,
+    storage: Mutex<Option<Storage>>,
+}
+
+async fn storage_for(app: &AppHandle, state: &Arc<AppState>) -> Result<Storage, String> {
+    let mut guard = state.storage.lock().await;
+    if guard.is_none() {
+        let dir = app
+            .path()
+            .app_data_dir()
+            .map_err(|e| format!("app_data_dir: {e}"))?;
+        *guard = Some(Storage::open(dir).map_err(|e| e.to_string())?);
+    }
+    Ok(guard.as_ref().unwrap().clone())
 }
 
 #[tauri::command]
@@ -61,6 +76,59 @@ async fn cancel_turn(state: State<'_, Arc<AppState>>) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn list_workspaces(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<Workspace>, String> {
+    let storage = storage_for(&app, &state).await?;
+    tokio::task::spawn_blocking(move || storage.list_workspaces())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn create_workspace(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    name: String,
+    path: String,
+) -> Result<Workspace, String> {
+    let storage = storage_for(&app, &state).await?;
+    tokio::task::spawn_blocking(move || storage.create_workspace(&name, Path::new(&path)))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn rename_workspace(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    id: String,
+    new_name: String,
+) -> Result<Workspace, String> {
+    let storage = storage_for(&app, &state).await?;
+    tokio::task::spawn_blocking(move || storage.rename_workspace(&id, &new_name))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn delete_workspace(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    id: String,
+) -> Result<(), String> {
+    let storage = storage_for(&app, &state).await?;
+    tokio::task::spawn_blocking(move || storage.delete_workspace(&id))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn read_file(path: String) -> Result<String, String> {
     let bytes = tokio::fs::read(&path)
         .await
@@ -91,7 +159,11 @@ pub fn run() {
             send_message,
             end_session,
             cancel_turn,
-            read_file
+            read_file,
+            list_workspaces,
+            create_workspace,
+            rename_workspace,
+            delete_workspace,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
