@@ -30,3 +30,6 @@ bun-debug.log*
 .env
 .env.local
 .env.*.local
+
+# Local spec breakdowns (not part of the published repo)
+docs/specs/
