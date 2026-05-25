@@ -402,10 +402,39 @@ impl Storage {
         Ok(())
     }
 
+    /// List the conversations in a workspace, sorted by most-recently-
+    /// active first.
+    pub fn list_conversations(&self, workspace_id: &str) -> Result<Vec<ConversationSummary>> {
+        let mut list = self.load_conversation_index(workspace_id)?;
+        list.sort_by(|a, b| b.last_active_at.cmp(&a.last_active_at));
+        Ok(list)
+    }
+
+    /// Delete a conversation's jsonl and its index entry. The workspace
+    /// folder and other conversations are left untouched.
+    pub fn delete_conversation(&self, workspace_id: &str, conversation_id: &str) -> Result<()> {
+        let jsonl = self
+            .workspace_dir(workspace_id)
+            .join("conversations")
+            .join(format!("{conversation_id}.jsonl"));
+        if jsonl.exists() {
+            fs::remove_file(&jsonl).with_context(|| format!("remove {:?}", jsonl))?;
+        }
+        let mut list = self.load_conversation_index(workspace_id)?;
+        let before = list.len();
+        list.retain(|c| c.id != conversation_id);
+        if list.len() == before && !jsonl.exists() {
+            // Nothing removed and no file existed either — caller is asking
+            // about a conversation that doesn't exist.
+            bail!("conversation {conversation_id} not found");
+        }
+        self.write_conversation_index(workspace_id, &list)?;
+        Ok(())
+    }
+
     /// Manually set a conversation's title (used by Story 05's
     /// `rename_conversation` command). Pins the title so future
     /// user-text events don't overwrite it.
-    #[allow(dead_code)] // wired up in Story 05
     pub fn pin_conversation_title(
         &self,
         workspace_id: &str,
@@ -1090,6 +1119,69 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("not found"), "got: {err}");
+    }
+
+    // ── list / delete conversations ──────────────────────────────────────
+
+    #[test]
+    fn list_conversations_sorts_by_last_active_desc() {
+        let (storage, _root, target) = open_store();
+        let ws = storage.create_workspace("ws", target.path()).unwrap();
+        // Three conversations, "a" oldest, "c" newest.
+        for id in ["a", "b", "c"] {
+            let log = storage.open_conversation(&ws.id, id).unwrap();
+            log.append_event(&user_text_event(&format!("hello from {id}")))
+                .unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(3));
+        }
+        let list = storage.list_conversations(&ws.id).unwrap();
+        let ids: Vec<&str> = list.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(ids, vec!["c", "b", "a"]);
+    }
+
+    #[test]
+    fn list_conversations_empty_when_no_conversations() {
+        let (storage, _root, target) = open_store();
+        let ws = storage.create_workspace("ws", target.path()).unwrap();
+        assert!(storage.list_conversations(&ws.id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn delete_conversation_removes_jsonl_and_index_entry() {
+        let (storage, _root, target) = open_store();
+        let ws = storage.create_workspace("ws", target.path()).unwrap();
+        let log = storage.open_conversation(&ws.id, "c1").unwrap();
+        log.append_event(&user_text_event("hi")).unwrap();
+        assert!(log.exists());
+
+        storage.delete_conversation(&ws.id, "c1").unwrap();
+        assert!(!log.exists());
+        assert!(storage.list_conversations(&ws.id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn delete_conversation_unknown_id_errors() {
+        let (storage, _root, target) = open_store();
+        let ws = storage.create_workspace("ws", target.path()).unwrap();
+        let err = storage
+            .delete_conversation(&ws.id, "nope")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("not found"), "got: {err}");
+    }
+
+    #[test]
+    fn delete_conversation_with_other_siblings_keeps_them() {
+        let (storage, _root, target) = open_store();
+        let ws = storage.create_workspace("ws", target.path()).unwrap();
+        let a = storage.open_conversation(&ws.id, "a").unwrap();
+        let b = storage.open_conversation(&ws.id, "b").unwrap();
+        a.append_event(&user_text_event("first")).unwrap();
+        b.append_event(&user_text_event("second")).unwrap();
+        storage.delete_conversation(&ws.id, "a").unwrap();
+        let remaining = storage.list_conversations(&ws.id).unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, "b");
     }
 
     #[test]

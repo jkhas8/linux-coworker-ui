@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use agent::{AgentSession, UserAttachment};
-use storage::{Storage, Workspace};
+use storage::{ConversationSummary, Storage, Workspace};
 use tauri::{AppHandle, Manager, State};
 use tokio::sync::Mutex;
 
@@ -218,6 +218,52 @@ async fn get_active_workspace(
 }
 
 #[tauri::command]
+async fn list_conversations(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    workspace_id: String,
+) -> Result<Vec<ConversationSummary>, String> {
+    let storage = storage_for(&app, &state).await?;
+    tokio::task::spawn_blocking(move || storage.list_conversations(&workspace_id))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn delete_conversation(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    workspace_id: String,
+    conversation_id: String,
+) -> Result<(), String> {
+    let storage = storage_for(&app, &state).await?;
+    tokio::task::spawn_blocking(move || {
+        storage.delete_conversation(&workspace_id, &conversation_id)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn rename_conversation(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    workspace_id: String,
+    conversation_id: String,
+    new_title: String,
+) -> Result<ConversationSummary, String> {
+    let storage = storage_for(&app, &state).await?;
+    tokio::task::spawn_blocking(move || {
+        storage.pin_conversation_title(&workspace_id, &conversation_id, &new_title)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn read_file(path: String) -> Result<String, String> {
     let bytes = tokio::fs::read(&path)
         .await
@@ -255,6 +301,9 @@ pub fn run() {
             delete_workspace,
             set_active_workspace,
             get_active_workspace,
+            list_conversations,
+            delete_conversation,
+            rename_conversation,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
